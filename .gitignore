@@ -25,3 +25,5 @@ Thumbs.db
 # Edytory
 .vscode/
 .idea/
+
+.csv
