@@ -39,25 +39,9 @@ install.packages(c("tidyverse", "forecast", "tseries", "FinTS",
 
 # Knit do PDF
 rmarkdown::render("TTF_Ekonometria.Rmd")
-\```
+```
 
 ## Autor
 
 Maciek Gilecki, Wioletta Grabias — Inżynieria i Analiza Danych, Politechnika Rzeszowska
 ```
-
-## 4. Komendy git (uruchom w terminalu RStudio lub PowerShell w folderze projektu)
-
-```bash
-git init
-git add .gitignore README.md TTF_Ekonometria.Rmd
-git commit -m "Initial commit: TTF econometrics project (ARIMA + GARCH)"
-
-# Stwórz repo na GitHub.com (private albo public, twój wybór)
-# Skopiuj URL i:
-git branch -M main
-git remote add origin https://github.com/TWOJ_USER/ttf-econometrics.git
-git push -u origin main
-```
-
----
