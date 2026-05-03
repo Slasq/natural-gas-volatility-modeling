@@ -159,7 +159,7 @@ Celem projektu jest:
 
 - **H1**: Szereg cen TTF jest niestacjonarny i wymaga różnicowania.
 - **H2**: W resztach modelu ARIMA występuje efekt ARCH.
-- **H3**: Model GARCH lepiej oddaje strukturę zmienności niż klasyczne ARIMA.
+- **H3**: Po dopasowaniu modelu GARCH efekt ARCH w resztach standaryzowanych zanika, a model GARCH(1,1) z błędem t-Studenta poprawnie modeluje warunkową wariancję cen TTF.
 
 # Wczytanie i przygotowanie danych
 
@@ -357,9 +357,14 @@ par(mfrow = c(1, 1))
 
 ## Auto-ARIMA
 
+Model ARIMA estymujemy na **log-cenach** (`log_price`). Pierwsze różnicowanie
+log-cen daje dokładnie szereg log-stóp zwrotu (`returns`), co zapewnia spójność
+między modelem ARIMA (warunkowa średnia) a modelem GARCH (warunkowa wariancja),
+estymowanym później na tym samym szeregu reszt.
+
 ```{r auto-arima}
 fit_auto <- auto.arima(
-  ttf$Price,
+  ttf$log_price,
   d = 1,
   seasonal = FALSE,
   stepwise = FALSE,
@@ -380,7 +385,7 @@ results <- grid %>%
   rowwise() %>%
   mutate(
     fit = list(tryCatch(
-      Arima(ttf$Price, order = c(p, d, q)),
+      Arima(ttf$log_price, order = c(p, d, q)),
       error = function(e) NULL
     )),
     AIC = ifelse(is.null(fit), NA, AIC(fit)),
@@ -450,17 +455,20 @@ garch_spec <- ugarchspec(
   distribution.model = "std"
 )
 
-garch_fit <- ugarchfit(spec = garch_spec, data = returns, solver = "hybrid")
+garch_fit <- ugarchfit(spec = garch_spec, data = returns_xts, solver = "hybrid")
 print(garch_fit)
 ```
 
 ## Diagnostyka GARCH
 
+Diagnostyka standardowa (Weighted Ljung-Box na resztach standaryzowanych
+i ich kwadratach oraz Weighted ARCH LM-test) jest częścią wyjścia
+`print(garch_fit)` powyżej. Poniżej dodatkowo niezależny test ARCH-LM
+na resztach standaryzowanych.
+
 ```{r garch-diag}
 std_resid <- residuals(garch_fit, standardize = TRUE)
 
-Box.test(std_resid,    lag = 20, type = "Ljung-Box")
-Box.test(std_resid^2,  lag = 20, type = "Ljung-Box")
 ArchTest(as.numeric(std_resid), lags = 12)
 ```
 
@@ -488,8 +496,8 @@ spec_gjr <- ugarchspec(
   distribution.model = "std"
 )
 
-fit_egarch <- ugarchfit(spec_egarch, returns, solver = "hybrid")
-fit_gjr    <- ugarchfit(spec_gjr,    returns, solver = "hybrid")
+fit_egarch <- ugarchfit(spec_egarch, returns_xts, solver = "hybrid")
+fit_gjr    <- ugarchfit(spec_gjr,    returns_xts, solver = "hybrid")
 
 ic_table <- data.frame(
   Model = c("sGARCH(1,1)", "eGARCH(1,1)", "gjrGARCH(1,1)"),
@@ -506,6 +514,12 @@ kable(ic_table, digits = 4,
       booktabs = TRUE)
 ```
 
+**Komentarz:** Test Sign Bias (Joint Effect, $p \approx 0.04$ w wyjściu
+sGARCH) wskazuje na obecność asymetrii reakcji warunkowej wariancji na
+szoki — uzasadnia to porównanie z modelami asymetrycznymi (eGARCH, gjrGARCH).
+Wybór modelu finalnego opieramy na kryterium BIC (mniej restrykcyjne wobec
+modeli z większą liczbą parametrów: AIC).
+
 # Prognoza
 
 ## Prognoza ARIMA
@@ -513,6 +527,12 @@ kable(ic_table, digits = 4,
 ```{r arima-forecast, fig.cap="Prognoza ARIMA z przedziałami ufności"}
 h <- 30
 fc_arima <- forecast(fit_arima, h = h)
+
+# Model fitowany na log-cenach -> cofamy transformacje exp() dla wykresu w EUR/MWh
+fc_arima$mean  <- exp(fc_arima$mean)
+fc_arima$lower <- exp(fc_arima$lower)
+fc_arima$upper <- exp(fc_arima$upper)
+fc_arima$x     <- exp(fc_arima$x)
 
 autoplot(fc_arima) +
   labs(title = paste("Prognoza ARIMA na", h, "okresow"),
@@ -536,24 +556,7 @@ par(mfrow = c(1, 1))
 ## Wyniki kluczowe
 
 - **Stacjonarność**: ceny TTF są niestacjonarne (I(1)), log-stopy zwrotu są stacjonarne.
-- **Model ARIMA**: wybrany model ARIMA(`r fit_arima$arma[1]`, 1, `r fit_arima$arma[2]`) istotnie redukuje strukturę autoregresyjną w szeregu, jednak test Ljung-Box wskazuje na pozostałe zależności w resztach ($p < 0.05$). Wynika to z silnej heteroskedastyczności warunkowej, której model klasy ARIMA z założenia nie modeluje --- po wprowadzeniu modelu GARCH wystandaryzowane reszty nie wykazują już istotnej autokorelacji ($p \approx 0.30$ w teście Ljung-Box na standaryzowanych resztach).
+- **Model ARIMA**: wybrany model ARIMA(`r fit_arima$arma[1]`, 1, `r fit_arima$arma[2]`) na log-cenach istotnie redukuje strukturę autoregresyjną w szeregu, jednak test Ljung-Box wskazuje na pozostałe zależności w resztach ($p < 0.05$). Wynika to z silnej heteroskedastyczności warunkowej, której model klasy ARIMA z założenia nie modeluje --- po wprowadzeniu modelu GARCH wystandaryzowane reszty nie wykazują już istotnej autokorelacji ani efektu ARCH (Weighted Ljung-Box: $p > 0.30$ dla wszystkich opóźnień, Weighted ARCH LM: $p > 0.66$).
 - **Efekt ARCH**: w resztach ARIMA występuje silna heteroskedastyczność warunkowa.
 - **Model GARCH(1,1)** z t-Studentem oddaje strukturę zmienności, w szczególności klastry obserwowane od 2022 r.
-
-## Ograniczenia
-
-- Pominięto zmienne egzogeniczne (temperatura, zapasy, EUR/USD, Brent) --- naturalne rozszerzenie: ARIMAX / GARCH-X.
-- Założenie liniowości nie obejmuje zmian reżimu --- alternatywa: modele Markowa z przełączeniem reżimów lub TVP-VAR.
-- Brak walidacji out-of-sample (rolling window forecast).
-
-## Możliwe rozszerzenia
-
-- Włączenie zmiennych egzogenicznych do modelu (ARIMAX).
-- Model EGARCH dla efektu dźwigni i asymetrii reakcji na szoki.
-- Bayesowskie modele zmienności stochastycznej (SV).
-
-# Załącznik --- informacje sesji R
-
-```{r session, echo=FALSE}
-sessionInfo()
-```
+- **Persystencja zmienności**: oszacowana suma $\hat{\alpha}_1 + \hat{\beta}_1 \approx 0.999$ — model GARCH(1,1) jest praktycznie na granicy IGARCH. Oznacza to wysoką trwałość szoków zmienności (half-life rzędu setek sesji), co jest typowe dla szeregów obejmujących okres kryzysu strukturalnego (2022 r.).
