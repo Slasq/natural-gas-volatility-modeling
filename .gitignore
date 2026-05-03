@@ -1,0 +1,27 @@
+# R
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+.Rproj.user/
+*.Rproj
+
+# RMarkdown — pliki tymczasowe
+*.knit.md
+*.utf8.md
+*.tex
+*.log
+*.aux
+*.out
+*.toc
+*.synctex.gz
+TTF_Ekonometria_files/
+TTF_Ekonometria_cache/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Edytory
+.vscode/
+.idea/
