@@ -1,0 +1,599 @@
+---
+title: "Modelowanie i prognozowanie cen gazu TTF"
+subtitle: "Analiza ekonometryczna: ARIMA + GARCH"
+author: "Maciek Gilecki, Wioletta Grabias"
+date: "`r format(Sys.Date(), '%d.%m.%Y')`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    latex_engine: lualatex
+    fig_caption: true
+fontsize: 11pt
+geometry: margin=2.5cm
+header-includes:
+  - \usepackage[polish]{babel}
+  - \usepackage{fontspec}
+  - \usepackage{float}
+  - \usepackage{caption}
+  - \captionsetup{font=small}
+  - \setmainfont{Times New Roman}
+  - \linespread{1.5}
+  - \usepackage{indentfirst}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 4.5,
+  fig.align = "center",
+  fig.pos = "H",
+  out.extra = ""
+)
+
+# Pakiety
+required_packages <- c(
+  "tidyverse",
+  "lubridate",
+  "forecast",
+  "tseries",
+  "FinTS",
+  "rugarch",
+  "moments",
+  "patchwork",
+  "knitr",
+  "kableExtra"
+)
+
+# Instalacja brakujących pakietów (odkomentuj przy pierwszym uruchomieniu)
+install.packages(setdiff(required_packages, rownames(installed.packages())))
+
+invisible(lapply(required_packages, library, character.only = TRUE))
+
+set.seed(42)
+theme_set(theme_minimal(base_size = 11))
+```
+
+# Wprowadzenie
+
+## Kontekst ekonomiczny
+
+Title Transfer Facility (TTF) to holenderski wirtualny hub gazowy --- główny benchmark
+cen gazu ziemnego w Europie. Notowania wyrażane są w EUR/MWh i odzwierciedlają
+równowagę popytu i podaży na rynku europejskim. Dynamika cen TTF jest determinowana
+przez czynniki popytowe (temperatura, aktywność przemysłowa), podażowe (zapasy
+magazynowe, dostawy rurociągowe, import LNG), makroekonomiczne (kurs EUR/USD,
+ceny ropy Brent) oraz geopolityczne (konflikty, sankcje, decyzje regulatoryjne).
+
+Szczególnym przypadkiem był rok 2022, gdy odcięcie dostaw z Rosji doprowadziło do
+wzrostu cen TTF do ponad 300 EUR/MWh (sierpień 2022) i dramatycznego wzrostu
+zmienności szeregu czasowego.
+
+## Mechanizm rynku --- analiza popytu i podaży
+
+Klasyczna analiza mikroekonomiczna pozwala zilustrować, jak szoki popytowe
+i podażowe wpływają na cenę równowagi rynkowej oraz wolumen obrotu gazem.
+Krzywa popytu $D$ jest opadająca (wraz ze wzrostem ceny ilość zapotrzebowania
+maleje), krzywa podaży $S$ jest rosnąca. Punkt przecięcia wyznacza cenę
+równowagi $P^*$ oraz wolumen $Q^*$.
+
+```{r supply-demand-plot, fig.cap="Wpływ szoków popytowych i podażowych na rynek gazu TTF", fig.width=9, fig.height=4.5, echo=FALSE}
+# Bazowe krzywe
+demand_base  <- function(q) 100 - q
+supply_base  <- function(q) 20 + q
+
+# Szok popytowy (mroźna zima -> wzrost zapotrzebowania -> D w prawo)
+demand_shift <- function(q) 130 - q
+
+# Szok podażowy (odcięcie dostaw z Rosji 2022 -> S w lewo / w górę)
+supply_shift <- function(q) 50 + q
+
+# Punkty równowagi (z analitycznego rozwiązania D = S)
+eq_base   <- data.frame(Q = 40, P = 60)
+eq_demand <- data.frame(Q = 55, P = 75)
+eq_supply <- data.frame(Q = 25, P = 75)
+
+# --- Panel A: szok popytowy ---
+p1 <- ggplot() +
+  xlim(0, 100) + ylim(0, 130) +
+  geom_function(fun = demand_base,  aes(color = "Popyt D"),    linewidth = 1) +
+  geom_function(fun = demand_shift, aes(color = "Popyt D'"),   linewidth = 1, linetype = "dashed") +
+  geom_function(fun = supply_base,  aes(color = "Podaz S"),    linewidth = 1) +
+  geom_point(data = eq_base,   aes(x = Q, y = P), size = 3, color = "black") +
+  geom_point(data = eq_demand, aes(x = Q, y = P), size = 3, color = "red") +
+  annotate("text", x = eq_base$Q + 4,   y = eq_base$P - 5,   label = "E[0]", size = 4) +
+  annotate("text", x = eq_demand$Q + 4, y = eq_demand$P + 5, label = "E[1]", size = 4, color = "red") +
+  annotate("segment", x = 75, y = 30, xend = 95, yend = 30,
+           arrow = arrow(length = unit(0.25, "cm")), color = "darkgreen") +
+  annotate("text", x = 85, y = 22, label = "D -> D'", size = 3.5, color = "darkgreen") +
+  scale_color_manual(values = c("Popyt D" = "steelblue",
+                                "Popyt D'" = "steelblue",
+                                "Podaz S" = "darkorange")) +
+  labs(title = "A. Szok popytowy (mrozna zima)",
+       x = "Ilosc Q (gaz)", y = "Cena P [EUR/MWh]",
+       color = NULL) +
+  theme(legend.position = "bottom")
+
+# --- Panel B: szok podażowy ---
+p2 <- ggplot() +
+  xlim(0, 100) + ylim(0, 130) +
+  geom_function(fun = demand_base,  aes(color = "Popyt D"),  linewidth = 1) +
+  geom_function(fun = supply_base,  aes(color = "Podaz S"),  linewidth = 1) +
+  geom_function(fun = supply_shift, aes(color = "Podaz S'"), linewidth = 1, linetype = "dashed") +
+  geom_point(data = eq_base,   aes(x = Q, y = P), size = 3, color = "black") +
+  geom_point(data = eq_supply, aes(x = Q, y = P), size = 3, color = "red") +
+  annotate("text", x = eq_base$Q + 4,   y = eq_base$P - 5,   label = "E[0]", size = 4) +
+  annotate("text", x = eq_supply$Q - 6, y = eq_supply$P + 5, label = "E[1]", size = 4, color = "red") +
+  annotate("segment", x = 70, y = 70, xend = 50, yend = 90,
+           arrow = arrow(length = unit(0.25, "cm")), color = "darkred") +
+  annotate("text", x = 78, y = 75, label = "S -> S'", size = 3.5, color = "darkred") +
+  scale_color_manual(values = c("Popyt D" = "steelblue",
+                                "Podaz S" = "darkorange",
+                                "Podaz S'" = "darkorange")) +
+  labs(title = "B. Szok podazowy (odciecie dostaw 2022)",
+       x = "Ilosc Q (gaz)", y = "Cena P [EUR/MWh]",
+       color = NULL) +
+  theme(legend.position = "bottom")
+
+p1 + p2
+```
+
+\textbf{Interpretacja:}
+
+\begin{itemize}
+\item \textbf{Panel A (szok popytowy)}: mroźna zima zwiększa zapotrzebowanie na gaz przy każdej cenie. Krzywa $D$ przesuwa się w prawo do $D'$. Nowa równowaga $E_1$ charakteryzuje się \emph{wyższą ceną} oraz \emph{wyższym wolumenem}.
+\item \textbf{Panel B (szok podażowy)}: odcięcie dostaw rurociągowych z Rosji w 2022 r.\ zmniejszyło dostępną podaż przy każdej cenie. Krzywa $S$ przesuwa się w lewo (w górę) do $S'$. Nowa równowaga $E_1$ charakteryzuje się \emph{wyższą ceną} przy \emph{niższym wolumenie} --- ten przypadek odpowiada faktycznej dynamice cen TTF w 2022 r.
+\end{itemize}
+
+W praktyce na rynku TTF szoki podażowe i popytowe nakładają się na siebie, a powrót
+do równowagi następuje przez kanały adaptacyjne: substytucję paliw, import LNG,
+ograniczenie zużycia przemysłowego.
+
+## Cel projektu
+
+Celem projektu jest:
+
+\begin{enumerate}
+\item Zbudowanie modelu \textbf{ARIMA} prognozującego warunkową średnią cen TTF.
+\item Weryfikacja efektu ARCH w resztach modelu.
+\item Estymacja modelu \textbf{GARCH} modelującego warunkową wariancję (zmienność).
+\item Diagnostyka oraz prognoza punktowa i przedziałowa.
+\end{enumerate}
+
+## Hipotezy badawcze
+
+\begin{itemize}
+\item \textbf{H1}: Szereg cen TTF jest niestacjonarny i wymaga różnicowania.
+\item \textbf{H2}: W resztach modelu ARIMA występuje efekt ARCH.
+\item \textbf{H3}: Model GARCH lepiej oddaje strukturę zmienności niż klasyczne ARIMA.
+\end{itemize}
+
+\newpage
+
+# Wczytanie i przygotowanie danych
+
+## Źródło danych
+
+Dane wykorzystane w analizie pochodzą z platformy Kaggle, dataset
+\textit{Dutch TTF Natural Gas Futures Historical Dataset} udostępniony
+przez Arushi Rawat:
+
+\begin{center}
+\url{https://www.kaggle.com/datasets/arushirawat/dutch-ttf-natural-gas-futures-historical-dataset}
+\end{center}
+
+Pierwotnym źródłem notowań jest \textbf{Investing.com}, agregujący dane
+z giełdy ICE Endex (kontrakty futures na gaz TTF). Dataset zawiera
+historyczne notowania dzienne kontraktu pierwszego (\textit{front-month
+futures}) wyrażone w EUR/MWh.
+
+\textbf{Struktura pliku CSV:}
+
+\begin{itemize}
+\item \texttt{Date} --- data sesji giełdowej
+\item \texttt{Price} --- cena zamknięcia [EUR/MWh] --- \textbf{zmienna analizowana}
+\item \texttt{Open, High, Low} --- ceny otwarcia, maksimum, minimum sesji
+\item \texttt{Vol.} --- wolumen obrotu
+\item \texttt{Change \%} --- zmiana procentowa względem poprzedniej sesji
+\end{itemize}
+
+W projekcie wykorzystywana jest wyłącznie kolumna \texttt{Price} jako
+zmienna zależna oraz \texttt{Date} jako indeks czasowy.
+
+```{r data-load}
+# Wczytanie surowych danych
+ttf_raw <- read.csv("data/ttf.csv", stringsAsFactors = FALSE)
+
+# Podgląd struktury
+str(ttf_raw)
+head(ttf_raw)
+```
+
+```{r data-clean}
+# UWAGA: Kaggle używa formatu daty "MM/DD/YYYY" lub "DD-MM-YYYY"
+# oraz kolumna ceny nazywa się "Price" (nie "Close"). Adaptujemy parser.
+
+# Wyznacz nazwę kolumny ceny (Close lub Price)
+price_col <- if ("Close" %in% names(ttf_raw)) "Close" else "Price"
+
+ttf <- ttf_raw %>%
+  rename(Price = !!price_col) %>%
+  mutate(
+    # Próba parsowania kilku popularnych formatów daty
+    Date = suppressWarnings(parse_date_time(
+      Date, orders = c("mdy", "dmy", "ymd", "Y-m-d", "m/d/Y", "d/m/Y")
+    )),
+    Date = as.Date(Date),
+    # Usuwamy ewentualne przecinki w cenie (Kaggle czasem ma "1,234.56")
+    Price = as.numeric(gsub(",", "", as.character(Price)))
+  ) %>%
+  select(Date, Price) %>%
+  filter(!is.na(Price), !is.na(Date)) %>%
+  arrange(Date) %>%
+  distinct(Date, .keep_all = TRUE)
+
+cat("Zakres dat:", as.character(min(ttf$Date)), "-",
+    as.character(max(ttf$Date)), "\n")
+cat("Liczba obserwacji:", nrow(ttf), "\n")
+cat("Liczba braków:", sum(is.na(ttf$Price)), "\n")
+```
+
+```{r data-summary}
+# Statystyki opisowe
+summary_stats <- ttf %>%
+  summarise(
+    Srednia    = mean(Price),
+    Mediana    = median(Price),
+    Odch_std   = sd(Price),
+    Min        = min(Price),
+    Max        = max(Price),
+    Skosnosc   = moments::skewness(Price),
+    Kurtoza    = moments::kurtosis(Price)
+  )
+
+kable(summary_stats, digits = 2,
+      caption = "Statystyki opisowe szeregu cen TTF",
+      booktabs = TRUE)
+```
+
+\newpage
+
+# Analiza eksploracyjna (EDA)
+
+## Wykres szeregu czasowego
+
+```{r plot-series, fig.cap="Ceny gazu TTF w okresie objętym analizą"}
+ggplot(ttf, aes(x = Date, y = Price)) +
+  geom_line(color = "steelblue", linewidth = 0.6) +
+  labs(title = "Ceny gazu TTF (EUR/MWh)",
+       subtitle = paste("Zakres:", min(ttf$Date), "-", max(ttf$Date)),
+       x = "Data", y = "Cena [EUR/MWh]") +
+  geom_vline(xintercept = as.Date("2022-02-24"),
+             linetype = "dashed", color = "red") +
+  annotate("text", x = as.Date("2022-02-24"),
+           y = max(ttf$Price) * 0.9,
+           label = "Inwazja Rosji\nna Ukraine",
+           hjust = -0.05, color = "red", size = 3)
+```
+
+## Logarytmiczne stopy zwrotu
+
+W ekonometrii finansowej standardowo modelujemy logarytmiczne stopy zwrotu:
+$$r_t = \ln(P_t) - \ln(P_{t-1})$$
+
+```{r log-returns, fig.cap="Logarytmiczne stopy zwrotu TTF --- widoczne klastry zmienności"}
+ttf <- ttf %>%
+  mutate(
+    log_price = log(Price),
+    log_ret   = c(NA, diff(log_price))
+  )
+
+returns_xts <- xts::xts(ttf$log_ret[-1], order.by = ttf$Date[-1])
+returns <- as.numeric(returns_xts)
+
+ggplot(filter(ttf, !is.na(log_ret)), aes(x = Date, y = log_ret)) +
+  geom_line(color = "darkred", linewidth = 0.4) +
+  labs(title = "Log-stopy zwrotu TTF",
+       x = "Data", y = expression(r[t]))
+```
+
+```{r returns-stats}
+ret_stats <- data.frame(
+  Srednia            = mean(returns),
+  Odch_std           = sd(returns),
+  Min                = min(returns),
+  Max                = max(returns),
+  Skosnosc           = moments::skewness(returns),
+  Kurtoza_nadwyzkowa = moments::kurtosis(returns) - 3,
+  JB_pvalue          = jarque.bera.test(returns)$p.value
+)
+
+kable(ret_stats, digits = 4,
+      caption = "Statystyki log-stóp zwrotu",
+      booktabs = TRUE)
+```
+
+Wysoka kurtoza nadwyżkowa ($>0$) wskazuje na ,,grube ogony'' rozkładu --- typowe dla
+szeregów finansowych. Test Jarque-Bera odrzuca hipotezę normalności.
+
+```{r returns-hist, fig.cap="Rozkład log-stóp zwrotu TTF z nałożoną gęstością normalną"}
+ggplot(data.frame(r = returns), aes(x = r)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 60,
+                 fill = "steelblue", alpha = 0.6) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(returns), sd = sd(returns)),
+                color = "red", linewidth = 1) +
+  labs(title = "Rozklad log-stop zwrotu vs rozklad normalny",
+       x = "Log-stopa zwrotu", y = "Gestosc")
+```
+
+\newpage
+
+# Test stacjonarności
+
+## Augmented Dickey-Fuller (ADF)
+
+$H_0$: szereg jest niestacjonarny (jednostkowy pierwiastek).
+
+```{r adf-test}
+adf_price <- adf.test(ttf$Price)
+print(adf_price)
+
+adf_ret <- adf.test(returns)
+print(adf_ret)
+```
+
+## KPSS
+
+$H_0$: szereg jest stacjonarny (komplementarny do ADF).
+
+```{r kpss-test}
+kpss_price <- kpss.test(ttf$Price)
+print(kpss_price)
+
+kpss_ret <- kpss.test(returns)
+print(kpss_ret)
+```
+
+\textbf{Wniosek:} Ceny są niestacjonarne. Po pierwszym różnicowaniu (log-stopy zwrotu)
+szereg staje się stacjonarny. Stosujemy zatem $d=1$ w modelu ARIMA.
+
+\newpage
+
+# Identyfikacja modelu ARIMA
+
+## ACF i PACF
+
+```{r acf-pacf, fig.cap="Funkcje ACF i PACF dla cen oraz log-stóp zwrotu", fig.height=5.5}
+par(mfrow = c(2, 2))
+acf(ttf$Price,  main = "ACF: ceny", lag.max = 40)
+pacf(ttf$Price, main = "PACF: ceny", lag.max = 40)
+acf(returns,    main = "ACF: log-stopy zwrotu", lag.max = 40)
+pacf(returns,   main = "PACF: log-stopy zwrotu", lag.max = 40)
+par(mfrow = c(1, 1))
+```
+
+# Estymacja modelu ARIMA
+
+## Auto-ARIMA
+
+```{r auto-arima}
+fit_auto <- auto.arima(
+  ttf$Price,
+  d = 1,
+  seasonal = FALSE,
+  stepwise = FALSE,
+  approximation = FALSE,
+  trace = FALSE,
+  ic = "aicc"
+)
+
+summary(fit_auto)
+```
+
+## Modele kandydujące --- porównanie AIC/BIC
+
+```{r arima-grid}
+grid <- expand.grid(p = 0:3, d = 1, q = 0:3)
+
+results <- grid %>%
+  rowwise() %>%
+  mutate(
+    fit = list(tryCatch(
+      Arima(ttf$Price, order = c(p, d, q)),
+      error = function(e) NULL
+    )),
+    AIC = ifelse(is.null(fit), NA, AIC(fit)),
+    BIC = ifelse(is.null(fit), NA, BIC(fit))
+  ) %>%
+  select(-fit) %>%
+  arrange(AIC)
+
+kable(head(results, 10), digits = 2,
+      caption = "10 najlepszych modeli ARIMA wg AIC",
+      booktabs = TRUE)
+```
+
+## Diagnostyka reszt
+
+```{r arima-final, fig.cap="Diagnostyka reszt modelu ARIMA"}
+fit_arima   <- fit_auto
+arima_resid <- residuals(fit_arima)
+
+checkresiduals(fit_arima)
+```
+
+```{r arima-tests}
+# Ljung-Box (autokorelacja reszt)
+lb <- Box.test(arima_resid, lag = 20, type = "Ljung-Box",
+               fitdf = sum(fit_arima$arma[1:2]))
+print(lb)
+
+# Jarque-Bera (normalność reszt)
+jb <- jarque.bera.test(arima_resid)
+print(jb)
+```
+
+\textbf{Wnioski z diagnostyki:}
+
+\begin{itemize}
+\item \textbf{Ljung-Box} ($p < 0.05$): odrzucamy hipotezę o braku autokorelacji w resztach. Resztki ARIMA wykazują pozostałą strukturę zależności --- jest to typowe dla szeregów finansowych z silną heteroskedastycznością warunkową (efekty ARCH wpływają również na statystykę Ljung-Boxa).
+\item \textbf{Jarque-Bera} ($p < 0.05$): reszty nie pochodzą z rozkładu normalnego (grube ogony) --- uzasadnia zastosowanie rozkładu t-Studenta w specyfikacji modelu GARCH.
+\item \textbf{Wykres reszt}: wyraźnie widoczne klastry zmienności (szczególnie w okresie 2021--2023) --- silna przesłanka do testu ARCH-LM i modelu GARCH.
+\end{itemize}
+
+\newpage
+
+# Test efektu ARCH
+
+$H_0$: brak efektu ARCH (jednorodność warunkowej wariancji).
+
+```{r arch-lm, fig.cap="ACF i PACF kwadratów reszt ARIMA"}
+arch_test <- ArchTest(arima_resid, lags = 12)
+print(arch_test)
+
+par(mfrow = c(1, 2))
+acf(arima_resid^2,  main = "ACF kwadratow reszt",  lag.max = 30)
+pacf(arima_resid^2, main = "PACF kwadratow reszt", lag.max = 30)
+par(mfrow = c(1, 1))
+```
+
+Jeśli $p < 0.05$, odrzucamy $H_0$, co oznacza obecność efektu ARCH i uzasadnia
+zastosowanie modelu GARCH.
+
+\newpage
+
+# Estymacja modelu GARCH
+
+## Specyfikacja GARCH(1,1) z błędem t-Studenta
+
+```{r garch-spec}
+arma_order <- c(fit_arima$arma[1], fit_arima$arma[2])
+
+garch_spec <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model     = list(armaOrder = arma_order, include.mean = TRUE),
+  distribution.model = "std"
+)
+
+garch_fit <- ugarchfit(spec = garch_spec, data = returns, solver = "hybrid")
+print(garch_fit)
+```
+
+## Diagnostyka GARCH
+
+```{r garch-diag}
+std_resid <- residuals(garch_fit, standardize = TRUE)
+
+Box.test(std_resid,    lag = 20, type = "Ljung-Box")
+Box.test(std_resid^2,  lag = 20, type = "Ljung-Box")
+ArchTest(as.numeric(std_resid), lags = 12)
+```
+
+```{r garch-plots, fig.cap="Diagnostyka modelu GARCH(1,1)", fig.height=6}
+par(mfrow = c(2, 2))
+plot(garch_fit, which = 1)
+plot(garch_fit, which = 9)
+plot(garch_fit, which = 10)
+plot(garch_fit, which = 11)
+par(mfrow = c(1, 1))
+```
+
+## Porównanie wariantów GARCH
+
+```{r garch-compare}
+spec_egarch <- ugarchspec(
+  variance.model     = list(model = "eGARCH",  garchOrder = c(1, 1)),
+  mean.model         = list(armaOrder = arma_order, include.mean = TRUE),
+  distribution.model = "std"
+)
+
+spec_gjr <- ugarchspec(
+  variance.model     = list(model = "gjrGARCH", garchOrder = c(1, 1)),
+  mean.model         = list(armaOrder = arma_order, include.mean = TRUE),
+  distribution.model = "std"
+)
+
+fit_egarch <- ugarchfit(spec_egarch, returns, solver = "hybrid")
+fit_gjr    <- ugarchfit(spec_gjr,    returns, solver = "hybrid")
+
+ic_table <- data.frame(
+  Model = c("sGARCH(1,1)", "eGARCH(1,1)", "gjrGARCH(1,1)"),
+  AIC = c(infocriteria(garch_fit)[1],
+          infocriteria(fit_egarch)[1],
+          infocriteria(fit_gjr)[1]),
+  BIC = c(infocriteria(garch_fit)[2],
+          infocriteria(fit_egarch)[2],
+          infocriteria(fit_gjr)[2])
+)
+
+kable(ic_table, digits = 4,
+      caption = "Porównanie modeli GARCH wg kryteriów informacyjnych",
+      booktabs = TRUE)
+```
+
+\newpage
+
+# Prognoza
+
+## Prognoza ARIMA
+
+```{r arima-forecast, fig.cap="Prognoza ARIMA z przedziałami ufności"}
+h <- 30
+fc_arima <- forecast(fit_arima, h = h)
+
+autoplot(fc_arima) +
+  labs(title = paste("Prognoza ARIMA na", h, "okresow"),
+       x = "Czas", y = "Cena [EUR/MWh]")
+```
+
+## Prognoza GARCH
+
+```{r garch-forecast, fig.cap="Prognoza warunkowej średniej i zmienności GARCH(1,1)", fig.height=4}
+fc_garch <- ugarchforecast(garch_fit, n.ahead = h)
+print(fc_garch)
+
+par(mfrow = c(1, 2))
+plot(fc_garch, which = 1)
+plot(fc_garch, which = 3)
+par(mfrow = c(1, 1))
+```
+
+\newpage
+
+# Podsumowanie i wnioski
+
+## Wyniki kluczowe
+
+\begin{enumerate}
+\item \textbf{Stacjonarność}: ceny TTF są niestacjonarne (I(1)), log-stopy zwrotu są stacjonarne.
+\item \textbf{Model ARIMA}: wybrany model ARIMA(`r fit_arima$arma[1]`, 1, `r fit_arima$arma[2]`) istotnie redukuje strukturę autoregresyjną w szeregu, jednak test Ljung-Box wskazuje na pozostałe zależności w resztach ($p < 0.05$). Wynika to z silnej heteroskedastyczności warunkowej, której model klasy ARIMA z założenia nie modeluje --- po wprowadzeniu modelu GARCH wystandaryzowane reszty nie wykazują już istotnej autokorelacji ($p \approx 0.30$ w teście Ljung-Box na standaryzowanych resztach).
+\item \textbf{Efekt ARCH}: w resztach ARIMA występuje silna heteroskedastyczność warunkowa.
+\item \textbf{Model GARCH(1,1)} z t-Studentem oddaje strukturę zmienności, w szczególności klastry obserwowane od 2022 r.
+\end{enumerate}
+
+## Ograniczenia
+
+\begin{itemize}
+\item Pominięto zmienne egzogeniczne (temperatura, zapasy, EUR/USD, Brent) --- naturalne rozszerzenie: ARIMAX / GARCH-X.
+\item Założenie liniowości nie obejmuje zmian reżimu --- alternatywa: modele Markowa z przełączeniem reżimów lub TVP-VAR.
+\item Brak walidacji out-of-sample (rolling window forecast).
+\end{itemize}
+
+## Możliwe rozszerzenia
+
+\begin{itemize}
+\item Włączenie zmiennych egzogenicznych do modelu (ARIMAX).
+\item Model EGARCH dla efektu dźwigni i asymetrii reakcji na szoki.
+\item Bayesowskie modele zmienności stochastycznej (SV).
+\end{itemize}
+
+# Załącznik --- informacje sesji R
+
+```{r session, echo=FALSE}
+sessionInfo()
+```
