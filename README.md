@@ -44,4 +44,3 @@ rmarkdown::render("TTF_Ekonometria.Rmd")
 ## Autor
 
 Maciek Gilecki, Wioletta Grabias — Inżynieria i Analiza Danych, Politechnika Rzeszowska
-```
