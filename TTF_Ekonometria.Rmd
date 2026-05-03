@@ -4,23 +4,18 @@ subtitle: "Analiza ekonometryczna: ARIMA + GARCH"
 author: "Maciek Gilecki, Wioletta Grabias"
 date: "`r format(Sys.Date(), '%d.%m.%Y')`"
 output:
-  pdf_document:
+  html_document:
     toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
     toc_depth: 3
     number_sections: true
-    latex_engine: lualatex
+    code_folding: show
+    theme: flatly
+    highlight: tango
     fig_caption: true
-fontsize: 11pt
-geometry: margin=2.5cm
-header-includes:
-  - \usepackage[polish]{babel}
-  - \usepackage{fontspec}
-  - \usepackage{float}
-  - \usepackage{caption}
-  - \captionsetup{font=small}
-  - \setmainfont{Times New Roman}
-  - \linespread{1.5}
-  - \usepackage{indentfirst}
+    df_print: paged
 ---
 
 ```{r setup, include=FALSE}
@@ -142,12 +137,10 @@ p2 <- ggplot() +
 p1 + p2
 ```
 
-\textbf{Interpretacja:}
+**Interpretacja:**
 
-\begin{itemize}
-\item \textbf{Panel A (szok popytowy)}: mroźna zima zwiększa zapotrzebowanie na gaz przy każdej cenie. Krzywa $D$ przesuwa się w prawo do $D'$. Nowa równowaga $E_1$ charakteryzuje się \emph{wyższą ceną} oraz \emph{wyższym wolumenem}.
-\item \textbf{Panel B (szok podażowy)}: odcięcie dostaw rurociągowych z Rosji w 2022 r.\ zmniejszyło dostępną podaż przy każdej cenie. Krzywa $S$ przesuwa się w lewo (w górę) do $S'$. Nowa równowaga $E_1$ charakteryzuje się \emph{wyższą ceną} przy \emph{niższym wolumenie} --- ten przypadek odpowiada faktycznej dynamice cen TTF w 2022 r.
-\end{itemize}
+- **Panel A (szok popytowy)**: mroźna zima zwiększa zapotrzebowanie na gaz przy każdej cenie. Krzywa $D$ przesuwa się w prawo do $D'$. Nowa równowaga $E_1$ charakteryzuje się *wyższą ceną* oraz *wyższym wolumenem*.
+- **Panel B (szok podażowy)**: odcięcie dostaw rurociągowych z Rosji w 2022 r. zmniejszyło dostępną podaż przy każdej cenie. Krzywa $S$ przesuwa się w lewo (w górę) do $S'$. Nowa równowaga $E_1$ charakteryzuje się *wyższą ceną* przy *niższym wolumenie* --- ten przypadek odpowiada faktycznej dynamice cen TTF w 2022 r.
 
 W praktyce na rynku TTF szoki podażowe i popytowe nakładają się na siebie, a powrót
 do równowagi następuje przez kanały adaptacyjne: substytucję paliw, import LNG,
@@ -157,52 +150,41 @@ ograniczenie zużycia przemysłowego.
 
 Celem projektu jest:
 
-\begin{enumerate}
-\item Zbudowanie modelu \textbf{ARIMA} prognozującego warunkową średnią cen TTF.
-\item Weryfikacja efektu ARCH w resztach modelu.
-\item Estymacja modelu \textbf{GARCH} modelującego warunkową wariancję (zmienność).
-\item Diagnostyka oraz prognoza punktowa i przedziałowa.
-\end{enumerate}
+- Zbudowanie modelu **ARIMA** prognozującego warunkową średnią cen TTF.
+- Weryfikacja efektu ARCH w resztach modelu.
+- Estymacja modelu **GARCH** modelującego warunkową wariancję (zmienność).
+- Diagnostyka oraz prognoza punktowa i przedziałowa.
 
 ## Hipotezy badawcze
 
-\begin{itemize}
-\item \textbf{H1}: Szereg cen TTF jest niestacjonarny i wymaga różnicowania.
-\item \textbf{H2}: W resztach modelu ARIMA występuje efekt ARCH.
-\item \textbf{H3}: Model GARCH lepiej oddaje strukturę zmienności niż klasyczne ARIMA.
-\end{itemize}
-
-\newpage
+- **H1**: Szereg cen TTF jest niestacjonarny i wymaga różnicowania.
+- **H2**: W resztach modelu ARIMA występuje efekt ARCH.
+- **H3**: Model GARCH lepiej oddaje strukturę zmienności niż klasyczne ARIMA.
 
 # Wczytanie i przygotowanie danych
 
 ## Źródło danych
 
 Dane wykorzystane w analizie pochodzą z platformy Kaggle, dataset
-\textit{Dutch TTF Natural Gas Futures Historical Dataset} udostępniony
+*Dutch TTF Natural Gas Futures Historical Dataset* udostępniony
 przez Arushi Rawat:
 
-\begin{center}
-\url{https://www.kaggle.com/datasets/arushirawat/dutch-ttf-natural-gas-futures-historical-dataset}
-\end{center}
-
-Pierwotnym źródłem notowań jest \textbf{Investing.com}, agregujący dane
+<https://www.kaggle.com/datasets/arushirawat/dutch-ttf-natural-gas-futures-historical-dataset>
+Pierwotnym źródłem notowań jest **Investing.com**, agregujący dane
 z giełdy ICE Endex (kontrakty futures na gaz TTF). Dataset zawiera
-historyczne notowania dzienne kontraktu pierwszego (\textit{front-month
-futures}) wyrażone w EUR/MWh.
+historyczne notowania dzienne kontraktu pierwszego (*front-month
+futures*) wyrażone w EUR/MWh.
 
-\textbf{Struktura pliku CSV:}
+**Struktura pliku CSV:**
 
-\begin{itemize}
-\item \texttt{Date} --- data sesji giełdowej
-\item \texttt{Price} --- cena zamknięcia [EUR/MWh] --- \textbf{zmienna analizowana}
-\item \texttt{Open, High, Low} --- ceny otwarcia, maksimum, minimum sesji
-\item \texttt{Vol.} --- wolumen obrotu
-\item \texttt{Change \%} --- zmiana procentowa względem poprzedniej sesji
-\end{itemize}
+- `Date` --- data sesji giełdowej
+- `Price` --- cena zamknięcia [EUR/MWh] --- **zmienna analizowana**
+- `Open, High, Low` --- ceny otwarcia, maksimum, minimum sesji
+- `Vol.` --- wolumen obrotu
+- `Change %` --- zmiana procentowa względem poprzedniej sesji
 
-W projekcie wykorzystywana jest wyłącznie kolumna \texttt{Price} jako
-zmienna zależna oraz \texttt{Date} jako indeks czasowy.
+W projekcie wykorzystywana jest wyłącznie kolumna `Price` jako
+zmienna zależna oraz `Date` jako indeks czasowy.
 
 ```{r data-load}
 # Wczytanie surowych danych
@@ -259,8 +241,6 @@ kable(summary_stats, digits = 2,
       caption = "Statystyki opisowe szeregu cen TTF",
       booktabs = TRUE)
 ```
-
-\newpage
 
 # Analiza eksploracyjna (EDA)
 
@@ -331,8 +311,6 @@ ggplot(data.frame(r = returns), aes(x = r)) +
        x = "Log-stopa zwrotu", y = "Gestosc")
 ```
 
-\newpage
-
 # Test stacjonarności
 
 ## Augmented Dickey-Fuller (ADF)
@@ -359,10 +337,8 @@ kpss_ret <- kpss.test(returns)
 print(kpss_ret)
 ```
 
-\textbf{Wniosek:} Ceny są niestacjonarne. Po pierwszym różnicowaniu (log-stopy zwrotu)
+**Wniosek:** Ceny są niestacjonarne. Po pierwszym różnicowaniu (log-stopy zwrotu)
 szereg staje się stacjonarny. Stosujemy zatem $d=1$ w modelu ARIMA.
-
-\newpage
 
 # Identyfikacja modelu ARIMA
 
@@ -438,15 +414,11 @@ jb <- jarque.bera.test(arima_resid)
 print(jb)
 ```
 
-\textbf{Wnioski z diagnostyki:}
+**Wnioski z diagnostyki:**
 
-\begin{itemize}
-\item \textbf{Ljung-Box} ($p < 0.05$): odrzucamy hipotezę o braku autokorelacji w resztach. Resztki ARIMA wykazują pozostałą strukturę zależności --- jest to typowe dla szeregów finansowych z silną heteroskedastycznością warunkową (efekty ARCH wpływają również na statystykę Ljung-Boxa).
-\item \textbf{Jarque-Bera} ($p < 0.05$): reszty nie pochodzą z rozkładu normalnego (grube ogony) --- uzasadnia zastosowanie rozkładu t-Studenta w specyfikacji modelu GARCH.
-\item \textbf{Wykres reszt}: wyraźnie widoczne klastry zmienności (szczególnie w okresie 2021--2023) --- silna przesłanka do testu ARCH-LM i modelu GARCH.
-\end{itemize}
-
-\newpage
+- **Ljung-Box** ($p < 0.05$): odrzucamy hipotezę o braku autokorelacji w resztach. Resztki ARIMA wykazują pozostałą strukturę zależności --- jest to typowe dla szeregów finansowych z silną heteroskedastycznością warunkową (efekty ARCH wpływają również na statystykę Ljung-Boxa).
+- **Jarque-Bera** ($p < 0.05$): reszty nie pochodzą z rozkładu normalnego (grube ogony) --- uzasadnia zastosowanie rozkładu t-Studenta w specyfikacji modelu GARCH.
+- **Wykres reszt**: wyraźnie widoczne klastry zmienności (szczególnie w okresie 2021--2023) --- silna przesłanka do testu ARCH-LM i modelu GARCH.
 
 # Test efektu ARCH
 
@@ -464,8 +436,6 @@ par(mfrow = c(1, 1))
 
 Jeśli $p < 0.05$, odrzucamy $H_0$, co oznacza obecność efektu ARCH i uzasadnia
 zastosowanie modelu GARCH.
-
-\newpage
 
 # Estymacja modelu GARCH
 
@@ -536,8 +506,6 @@ kable(ic_table, digits = 4,
       booktabs = TRUE)
 ```
 
-\newpage
-
 # Prognoza
 
 ## Prognoza ARIMA
@@ -563,34 +531,26 @@ plot(fc_garch, which = 3)
 par(mfrow = c(1, 1))
 ```
 
-\newpage
-
 # Podsumowanie i wnioski
 
 ## Wyniki kluczowe
 
-\begin{enumerate}
-\item \textbf{Stacjonarność}: ceny TTF są niestacjonarne (I(1)), log-stopy zwrotu są stacjonarne.
-\item \textbf{Model ARIMA}: wybrany model ARIMA(`r fit_arima$arma[1]`, 1, `r fit_arima$arma[2]`) istotnie redukuje strukturę autoregresyjną w szeregu, jednak test Ljung-Box wskazuje na pozostałe zależności w resztach ($p < 0.05$). Wynika to z silnej heteroskedastyczności warunkowej, której model klasy ARIMA z założenia nie modeluje --- po wprowadzeniu modelu GARCH wystandaryzowane reszty nie wykazują już istotnej autokorelacji ($p \approx 0.30$ w teście Ljung-Box na standaryzowanych resztach).
-\item \textbf{Efekt ARCH}: w resztach ARIMA występuje silna heteroskedastyczność warunkowa.
-\item \textbf{Model GARCH(1,1)} z t-Studentem oddaje strukturę zmienności, w szczególności klastry obserwowane od 2022 r.
-\end{enumerate}
+- **Stacjonarność**: ceny TTF są niestacjonarne (I(1)), log-stopy zwrotu są stacjonarne.
+- **Model ARIMA**: wybrany model ARIMA(`r fit_arima$arma[1]`, 1, `r fit_arima$arma[2]`) istotnie redukuje strukturę autoregresyjną w szeregu, jednak test Ljung-Box wskazuje na pozostałe zależności w resztach ($p < 0.05$). Wynika to z silnej heteroskedastyczności warunkowej, której model klasy ARIMA z założenia nie modeluje --- po wprowadzeniu modelu GARCH wystandaryzowane reszty nie wykazują już istotnej autokorelacji ($p \approx 0.30$ w teście Ljung-Box na standaryzowanych resztach).
+- **Efekt ARCH**: w resztach ARIMA występuje silna heteroskedastyczność warunkowa.
+- **Model GARCH(1,1)** z t-Studentem oddaje strukturę zmienności, w szczególności klastry obserwowane od 2022 r.
 
 ## Ograniczenia
 
-\begin{itemize}
-\item Pominięto zmienne egzogeniczne (temperatura, zapasy, EUR/USD, Brent) --- naturalne rozszerzenie: ARIMAX / GARCH-X.
-\item Założenie liniowości nie obejmuje zmian reżimu --- alternatywa: modele Markowa z przełączeniem reżimów lub TVP-VAR.
-\item Brak walidacji out-of-sample (rolling window forecast).
-\end{itemize}
+- Pominięto zmienne egzogeniczne (temperatura, zapasy, EUR/USD, Brent) --- naturalne rozszerzenie: ARIMAX / GARCH-X.
+- Założenie liniowości nie obejmuje zmian reżimu --- alternatywa: modele Markowa z przełączeniem reżimów lub TVP-VAR.
+- Brak walidacji out-of-sample (rolling window forecast).
 
 ## Możliwe rozszerzenia
 
-\begin{itemize}
-\item Włączenie zmiennych egzogenicznych do modelu (ARIMAX).
-\item Model EGARCH dla efektu dźwigni i asymetrii reakcji na szoki.
-\item Bayesowskie modele zmienności stochastycznej (SV).
-\end{itemize}
+- Włączenie zmiennych egzogenicznych do modelu (ARIMAX).
+- Model EGARCH dla efektu dźwigni i asymetrii reakcji na szoki.
+- Bayesowskie modele zmienności stochastycznej (SV).
 
 # Załącznik --- informacje sesji R
 
