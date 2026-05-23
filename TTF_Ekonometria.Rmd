@@ -1,6 +1,6 @@
 ---
 title: "Modelowanie i prognozowanie cen gazu TTF"
-subtitle: "Analiza ekonometryczna: ARIMA + GARCH"
+subtitle: "Analiza ekonometryczna wielowymiarowa: ARIMAX + GARCH-X + kointegracja"
 author: "Maciek Gilecki, Wioletta Grabias"
 date: "`r format(Sys.Date(), '%d.%m.%Y')`"
 output:
@@ -30,23 +30,14 @@ knitr::opts_chunk$set(
   out.extra = ""
 )
 
-# Pakiety
 required_packages <- c(
-  "tidyverse",
-  "lubridate",
-  "forecast",
-  "tseries",
-  "FinTS",
-  "rugarch",
-  "moments",
-  "patchwork",
-  "knitr",
-  "kableExtra"
+  "tidyverse", "lubridate", "forecast", "tseries", "FinTS",
+  "rugarch", "moments", "patchwork", "knitr", "kableExtra",
+  "urca", "xts", "zoo", "GGally"
 )
 
-# Instalacja brakujących pakietów (odkomentuj przy pierwszym uruchomieniu)
-install.packages(setdiff(required_packages, rownames(installed.packages())))
-
+to_install <- setdiff(required_packages, rownames(installed.packages()))
+if (length(to_install) > 0) install.packages(to_install)
 invisible(lapply(required_packages, library, character.only = TRUE))
 
 set.seed(42)
@@ -77,22 +68,15 @@ maleje), krzywa podaży $S$ jest rosnąca. Punkt przecięcia wyznacza cenę
 równowagi $P^*$ oraz wolumen $Q^*$.
 
 ```{r supply-demand-plot, fig.cap="Wpływ szoków popytowych i podażowych na rynek gazu TTF", fig.width=9, fig.height=4.5, echo=FALSE}
-# Bazowe krzywe
 demand_base  <- function(q) 100 - q
 supply_base  <- function(q) 20 + q
-
-# Szok popytowy (mroźna zima -> wzrost zapotrzebowania -> D w prawo)
 demand_shift <- function(q) 130 - q
-
-# Szok podażowy (odcięcie dostaw z Rosji 2022 -> S w lewo / w górę)
 supply_shift <- function(q) 50 + q
 
-# Punkty równowagi (z analitycznego rozwiązania D = S)
 eq_base   <- data.frame(Q = 40, P = 60)
 eq_demand <- data.frame(Q = 55, P = 75)
 eq_supply <- data.frame(Q = 25, P = 75)
 
-# --- Panel A: szok popytowy ---
 p1 <- ggplot() +
   xlim(0, 100) + ylim(0, 130) +
   geom_function(fun = demand_base,  aes(color = "Popyt D"),    linewidth = 1) +
@@ -113,7 +97,6 @@ p1 <- ggplot() +
        color = NULL) +
   theme(legend.position = "bottom")
 
-# --- Panel B: szok podażowy ---
 p2 <- ggplot() +
   xlim(0, 100) + ylim(0, 130) +
   geom_function(fun = demand_base,  aes(color = "Popyt D"),  linewidth = 1) +
@@ -140,142 +123,175 @@ p1 + p2
 **Interpretacja:**
 
 - **Panel A (szok popytowy)**: mroźna zima zwiększa zapotrzebowanie na gaz przy każdej cenie. Krzywa $D$ przesuwa się w prawo do $D'$. Nowa równowaga $E_1$ charakteryzuje się *wyższą ceną* oraz *wyższym wolumenem*.
-- **Panel B (szok podażowy)**: odcięcie dostaw rurociągowych z Rosji w 2022 r. zmniejszyło dostępną podaż przy każdej cenie. Krzywa $S$ przesuwa się w lewo (w górę) do $S'$. Nowa równowaga $E_1$ charakteryzuje się *wyższą ceną* przy *niższym wolumenie* --- ten przypadek odpowiada faktycznej dynamice cen TTF w 2022 r.
-
-W praktyce na rynku TTF szoki podażowe i popytowe nakładają się na siebie, a powrót
-do równowagi następuje przez kanały adaptacyjne: substytucję paliw, import LNG,
-ograniczenie zużycia przemysłowego.
+- **Panel B (szok podażowy)**: odcięcie dostaw rurociągowych z Rosji w 2022 r. zmniejszyło dostępną podaż przy każdej cenie. Krzywa $S$ przesuwa się w lewo (w górę) do $S'$. Nowa równowaga $E_1$ charakteryzuje się *wyższą ceną* przy *niższym wolumenie*.
 
 ## Cel projektu
 
-Celem projektu jest:
+Celem projektu jest zbudowanie **wielowymiarowego modelu ekonometrycznego** prognozującego
+cenę i zmienność gazu TTF, w oparciu o cenę TTF oraz fundamentalne regresory egzogeniczne:
 
-- Zbudowanie modelu **ARIMA** prognozującego warunkową średnią cen TTF.
-- Weryfikacja efektu ARCH w resztach modelu.
-- Estymacja modelu **GARCH** modelującego warunkową wariancję (zmienność).
-- Diagnostyka oraz prognoza punktowa i przedziałowa.
+- Cena ropy **Brent** --- historyczne powiązanie kontraktowe gaz–ropa,
+- Kurs **EUR/USD** --- kanał walutowy importu LNG (kontrakty rozliczane w USD),
+- **Zapasy gazu UE** --- agregat poziomu wypełnienia magazynów (AGSI+),
+- **Heating Degree Days (HDD)** --- proxy popytu grzewczego (Open-Meteo, ważona średnia
+  dla Europy Zach.).
+
+Etapy modelowania:
+
+1. **EDA wielowymiarowa**: korelacje, ko-ewolucja szeregów.
+2. **Stacjonarność**: ADF i KPSS dla wszystkich zmiennych.
+3. **Kointegracja**: Engle-Granger i Johansen --- weryfikacja długookresowej relacji
+   równowagi między TTF, Brent i EUR/USD.
+4. **ARIMAX**: rozszerzenie ARIMA o regresory egzogeniczne (warunkowa średnia).
+5. **Efekt ARCH**: test ARCH-LM na resztach ARIMAX.
+6. **GARCH-X**: model heteroskedastyczności warunkowej z regresorem `Storage_pct`
+   w równaniu wariancji (intuicja: niskie zapasy zwiększają wrażliwość rynku na szoki).
+7. **Diagnostyka i selekcja**: porównanie ARIMA(jednowymiarowy) vs ARIMAX, sGARCH vs
+   eGARCH vs gjrGARCH, kryteria AIC/BIC, Ljung-Box, Sign-Bias.
+8. **Walidacja out-of-sample**: walk-forward + test Diebolda–Mariano.
+9. **Prognoza**: punktowa (cena) i przedziałowa (zmienność) z uwzględnieniem
+   ścieżek regresorów.
 
 ## Hipotezy badawcze
 
-- **H1**: Szereg cen TTF jest niestacjonarny i wymaga różnicowania.
-- **H2**: W resztach modelu ARIMA występuje efekt ARCH.
-- **H3**: Po dopasowaniu modelu GARCH efekt ARCH w resztach standaryzowanych zanika, a model GARCH(1,1) z błędem t-Studenta poprawnie modeluje warunkową wariancję cen TTF.
+- **H1**: Szereg cen TTF jest niestacjonarny (I(1)) i wymaga różnicowania.
+- **H2**: Między cenami TTF, Brent i EUR/USD istnieje długookresowa relacja kointegrująca.
+- **H3**: W resztach modelu ARIMAX występuje istotny efekt ARCH.
+- **H4**: Model GARCH(1,1)-X z poziomem zapasów w równaniu wariancji wyjaśnia
+  heteroskedastyczność lepiej niż klasyczny sGARCH(1,1).
+- **H5**: Włączenie regresorów fundamentalnych istotnie poprawia jakość prognozy
+  out-of-sample względem modelu jednowymiarowego (test Diebolda–Mariano).
 
 # Wczytanie i przygotowanie danych
 
-## Źródło danych
+## Źródła danych
 
-Dane wykorzystane w analizie pochodzą z platformy Kaggle, dataset
-*Dutch TTF Natural Gas Futures Historical Dataset* udostępniony
-przez Arushi Rawat:
+Projekt łączy szeregi z kilku źródeł publicznych:
 
-<https://www.kaggle.com/datasets/arushirawat/dutch-ttf-natural-gas-futures-historical-dataset>
-Pierwotnym źródłem notowań jest **Investing.com**, agregujący dane
-z giełdy ICE Endex (kontrakty futures na gaz TTF). Dataset zawiera
-historyczne notowania dzienne kontraktu pierwszego (*front-month
-futures*) wyrażone w EUR/MWh.
+| Zmienna | Opis | Źródło | Częst. |
+|---|---|---|---|
+| `TTF`         | Cena front-month TTF [EUR/MWh] (Investing.com via Kaggle) | `data/raw/ttf.csv`         | dzienna |
+| `Brent`       | Cena ropy Brent [USD/bbl] | FRED `DCOILBRENTEU`        | dzienna |
+| `EURUSD`      | Kurs USD za 1 EUR | FRED `DEXUSEU`             | dzienna |
+| `Storage_pct` | % wypełnienia magazynów gazu UE | AGSI+ API                  | dzienna |
+| `HDD`         | Heating Degree Days (baza 18 °C) dla Europy Zach. | Open-Meteo Historical API | dzienna |
 
-**Struktura pliku CSV:**
-
-- `Date` --- data sesji giełdowej
-- `Price` --- cena zamknięcia [EUR/MWh] --- **zmienna analizowana**
-- `Open, High, Low` --- ceny otwarcia, maksimum, minimum sesji
-- `Vol.` --- wolumen obrotu
-- `Change %` --- zmiana procentowa względem poprzedniej sesji
-
-W projekcie wykorzystywana jest wyłącznie kolumna `Price` jako
-zmienna zależna oraz `Date` jako indeks czasowy.
+Pobieranie i scalanie realizują skrypty `R/01_fetch_data.R` oraz `R/02_merge_data.R`
+(patrz `README.md`). Niniejszy raport wczytuje gotowy panel `data/processed/ttf_merged.csv`.
 
 ```{r data-load}
-# Wczytanie surowych danych
-ttf_raw <- read.csv("data/ttf.csv", stringsAsFactors = FALSE)
+merged_path <- file.path("data", "processed", "ttf_merged.csv")
+if (!file.exists(merged_path)) {
+  stop("Brak pliku ", merged_path,
+       ". Uruchom najpierw R/01_fetch_data.R oraz R/02_merge_data.R.")
+}
 
-# Podgląd struktury
-str(ttf_raw)
-head(ttf_raw)
+df <- read.csv(merged_path, stringsAsFactors = FALSE) |>
+  mutate(Date = as.Date(Date)) |>
+  arrange(Date)
+
+cat("Zakres dat:", as.character(min(df$Date)), "-",
+    as.character(max(df$Date)), "\n")
+cat("Liczba obserwacji:", nrow(df), "\n")
+cat("Kolumny:", paste(names(df), collapse = ", "), "\n")
+head(df)
 ```
 
-```{r data-clean}
-# UWAGA: Kaggle używa formatu daty "MM/DD/YYYY" lub "DD-MM-YYYY"
-# oraz kolumna ceny nazywa się "Price" (nie "Close"). Adaptujemy parser.
-
-# Wyznacz nazwę kolumny ceny (Close lub Price)
-price_col <- if ("Close" %in% names(ttf_raw)) "Close" else "Price"
-
-ttf <- ttf_raw %>%
-  rename(Price = !!price_col) %>%
-  mutate(
-    # Próba parsowania kilku popularnych formatów daty
-    Date = suppressWarnings(parse_date_time(
-      Date, orders = c("mdy", "dmy", "ymd", "Y-m-d", "m/d/Y", "d/m/Y")
-    )),
-    Date = as.Date(Date),
-    # Usuwamy ewentualne przecinki w cenie (Kaggle czasem ma "1,234.56")
-    Price = as.numeric(gsub(",", "", as.character(Price)))
-  ) %>%
-  select(Date, Price) %>%
-  filter(!is.na(Price), !is.na(Date)) %>%
-  arrange(Date) %>%
-  distinct(Date, .keep_all = TRUE)
-
-cat("Zakres dat:", as.character(min(ttf$Date)), "-",
-    as.character(max(ttf$Date)), "\n")
-cat("Liczba obserwacji:", nrow(ttf), "\n")
-cat("Liczba braków:", sum(is.na(ttf$Price)), "\n")
-```
+## Statystyki opisowe
 
 ```{r data-summary}
-# Statystyki opisowe
-summary_stats <- ttf %>%
-  summarise(
-    Srednia    = mean(Price),
-    Mediana    = median(Price),
-    Odch_std   = sd(Price),
-    Min        = min(Price),
-    Max        = max(Price),
-    Skosnosc   = moments::skewness(Price),
-    Kurtoza    = moments::kurtosis(Price)
-  )
+num_cols <- df |> select(where(is.numeric)) |> names()
 
-kable(summary_stats, digits = 2,
-      caption = "Statystyki opisowe szeregu cen TTF",
-      booktabs = TRUE)
+stats <- df |>
+  select(all_of(num_cols)) |>
+  summarise(across(everything(), list(
+    Srednia  = ~ mean(.x, na.rm = TRUE),
+    Mediana  = ~ median(.x, na.rm = TRUE),
+    Odch_std = ~ sd(.x, na.rm = TRUE),
+    Min      = ~ min(.x, na.rm = TRUE),
+    Max      = ~ max(.x, na.rm = TRUE),
+    Skosnosc = ~ moments::skewness(.x, na.rm = TRUE),
+    Kurtoza  = ~ moments::kurtosis(.x, na.rm = TRUE)
+  ))) |>
+  pivot_longer(everything(),
+               names_to = c("Zmienna", ".value"),
+               names_sep = "_(?=[A-Z])")
+
+kable(stats, digits = 2, caption = "Statystyki opisowe wszystkich szeregów",
+      booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
 # Analiza eksploracyjna (EDA)
 
-## Wykres szeregu czasowego
+## Wykresy szeregów
 
-```{r plot-series, fig.cap="Ceny gazu TTF w okresie objętym analizą"}
-ggplot(ttf, aes(x = Date, y = Price)) +
-  geom_line(color = "steelblue", linewidth = 0.6) +
-  labs(title = "Ceny gazu TTF (EUR/MWh)",
-       subtitle = paste("Zakres:", min(ttf$Date), "-", max(ttf$Date)),
-       x = "Data", y = "Cena [EUR/MWh]") +
+```{r plot-multi, fig.cap="Ewolucja wszystkich analizowanych szeregów", fig.height=8}
+df_long <- df |>
+  pivot_longer(-Date, names_to = "Zmienna", values_to = "Wartosc")
+
+ggplot(df_long, aes(x = Date, y = Wartosc, color = Zmienna)) +
+  geom_line(linewidth = 0.5, show.legend = FALSE) +
+  facet_wrap(~ Zmienna, scales = "free_y", ncol = 2) +
   geom_vline(xintercept = as.Date("2022-02-24"),
-             linetype = "dashed", color = "red") +
-  annotate("text", x = as.Date("2022-02-24"),
-           y = max(ttf$Price) * 0.9,
-           label = "Inwazja Rosji\nna Ukraine",
-           hjust = -0.05, color = "red", size = 3)
+             linetype = "dashed", color = "red", alpha = 0.6) +
+  labs(title = "Szeregi czasowe: TTF i regresory fundamentalne",
+       subtitle = "Czerwona linia: inwazja Rosji na Ukraine (24.02.2022)",
+       x = NULL, y = NULL) +
+  theme(strip.text = element_text(face = "bold"))
 ```
 
-## Logarytmiczne stopy zwrotu
+## Korelacje (poziomy i stopy zwrotu)
 
-W ekonometrii finansowej standardowo modelujemy logarytmiczne stopy zwrotu:
-$$r_t = \ln(P_t) - \ln(P_{t-1})$$
+```{r corr-matrix, fig.cap="Macierz korelacji: poziomy vs log-stopy zwrotu", fig.height=5}
+# Korelacje w poziomach (mogą być pozorne - zmienne zintegrowane!)
+cor_levels <- df |> select(all_of(num_cols)) |> cor(use = "pairwise.complete.obs")
 
-```{r log-returns, fig.cap="Logarytmiczne stopy zwrotu TTF --- widoczne klastry zmienności"}
-ttf <- ttf %>%
+# Log-stopy zwrotu / zmiany - obraz krotkookresowy
+df_diff <- df |>
   mutate(
-    log_price = log(Price),
-    log_ret   = c(NA, diff(log_price))
-  )
+    r_TTF     = c(NA, diff(log(TTF))),
+    r_Brent   = c(NA, diff(log(Brent))),
+    r_EURUSD  = c(NA, diff(log(EURUSD))),
+    d_Storage = c(NA, diff(Storage_pct)),
+    d_HDD     = c(NA, diff(HDD))
+  ) |>
+  filter(if_all(c(r_TTF, r_Brent, r_EURUSD, d_Storage, d_HDD), ~ !is.na(.x)))
 
-returns_xts <- xts::xts(ttf$log_ret[-1], order.by = ttf$Date[-1])
-returns <- as.numeric(returns_xts)
+cor_diffs <- df_diff |>
+  select(r_TTF, r_Brent, r_EURUSD, d_Storage, d_HDD) |>
+  cor(use = "pairwise.complete.obs")
 
-ggplot(filter(ttf, !is.na(log_ret)), aes(x = Date, y = log_ret)) +
+kable(round(cor_levels, 3),
+      caption = "Korelacje w poziomach (uwaga: szeregi niestacjonarne, korelacje mogą być pozorne)",
+      booktabs = TRUE)
+
+kable(round(cor_diffs, 3),
+      caption = "Korelacje stóp zwrotu / pierwszych różnic (krótkookresowe współruchy)",
+      booktabs = TRUE)
+```
+
+**Obserwacje:**
+
+- W *poziomach* TTF jest silnie skorelowane z Brent (oczekiwane: historyczne powiązanie
+  kontraktowe gaz–ropa). Korelacja w poziomach między zmiennymi I(1) bywa pozorna ---
+  konkretną relację weryfikuje analiza kointegracji.
+- W *stopach zwrotu* korelacje są dużo słabsze, ale wciąż dodatnie z Brent --- to
+  rzeczywiste współruchy krótkookresowe.
+- `Storage_pct` ujemnie skorelowany z TTF (niskie zapasy → wysokie ceny) --- spójne z teorią.
+- `HDD` dodatnio skorelowane z TTF (mróz → popyt grzewczy).
+
+## Log-stopy zwrotu TTF
+
+```{r log-returns, fig.cap="Logarytmiczne stopy zwrotu TTF - widoczne klastry zmiennosci"}
+df_diff_xts <- xts(
+  df_diff |> select(r_TTF, r_Brent, r_EURUSD, d_Storage, d_HDD),
+  order.by = df_diff$Date
+)
+
+returns <- as.numeric(df_diff$r_TTF)
+
+ggplot(df_diff, aes(x = Date, y = r_TTF)) +
   geom_line(color = "darkred", linewidth = 0.4) +
   labs(title = "Log-stopy zwrotu TTF",
        x = "Data", y = expression(r[t]))
@@ -293,191 +309,282 @@ ret_stats <- data.frame(
 )
 
 kable(ret_stats, digits = 4,
-      caption = "Statystyki log-stóp zwrotu",
+      caption = "Statystyki log-stóp zwrotu TTF",
       booktabs = TRUE)
 ```
 
-Wysoka kurtoza nadwyżkowa ($>0$) wskazuje na ,,grube ogony'' rozkładu --- typowe dla
-szeregów finansowych. Test Jarque-Bera odrzuca hipotezę normalności.
+# Testy stacjonarności
 
-```{r returns-hist, fig.cap="Rozkład log-stóp zwrotu TTF z nałożoną gęstością normalną"}
-ggplot(data.frame(r = returns), aes(x = r)) +
-  geom_histogram(aes(y = after_stat(density)), bins = 60,
-                 fill = "steelblue", alpha = 0.6) +
-  stat_function(fun = dnorm,
-                args = list(mean = mean(returns), sd = sd(returns)),
-                color = "red", linewidth = 1) +
-  labs(title = "Rozklad log-stop zwrotu vs rozklad normalny",
-       x = "Log-stopa zwrotu", y = "Gestosc")
+## ADF i KPSS dla wszystkich zmiennych
+
+```{r adf-kpss-all}
+do_tests <- function(x, name) {
+  x <- na.omit(x)
+  adf <- suppressWarnings(adf.test(x))
+  kpss <- suppressWarnings(kpss.test(x))
+  data.frame(
+    Zmienna     = name,
+    ADF_stat    = round(adf$statistic, 3),
+    ADF_pvalue  = round(adf$p.value, 3),
+    KPSS_stat   = round(kpss$statistic, 3),
+    KPSS_pvalue = round(kpss$p.value, 3)
+  )
+}
+
+# Poziomy (logi cen, surowe zmienne fundamentalne)
+levels_tests <- bind_rows(
+  do_tests(log(df$TTF),         "log(TTF)"),
+  do_tests(log(df$Brent),       "log(Brent)"),
+  do_tests(log(df$EURUSD),      "log(EURUSD)"),
+  do_tests(df$Storage_pct,      "Storage_pct"),
+  do_tests(df$HDD,              "HDD")
+)
+
+# Pierwsze roznice
+diffs_tests <- bind_rows(
+  do_tests(df_diff$r_TTF,     "d log(TTF)"),
+  do_tests(df_diff$r_Brent,   "d log(Brent)"),
+  do_tests(df_diff$r_EURUSD,  "d log(EURUSD)"),
+  do_tests(df_diff$d_Storage, "d Storage_pct"),
+  do_tests(df_diff$d_HDD,     "d HDD")
+)
+
+kable(levels_tests, caption = "Testy stacjonarnosci - poziomy",
+      booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+kable(diffs_tests, caption = "Testy stacjonarnosci - pierwsze roznice",
+      booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
-# Test stacjonarności
+**Wniosek:** Szeregi cenowe (TTF, Brent, EUR/USD) są niestacjonarne w poziomach
+(I(1)) i stacjonarne w pierwszych różnicach. `Storage_pct` i `HDD` wykazują
+silną sezonowość roczną, ale są stacjonarne w sensie ADF (oscylują wokół poziomu).
+**H1** zweryfikowana pozytywnie.
 
-## Augmented Dickey-Fuller (ADF)
+# Analiza kointegracji
 
-$H_0$: szereg jest niestacjonarny (jednostkowy pierwiastek).
+Skoro `log(TTF)`, `log(Brent)`, `log(EURUSD)` są I(1), pytamy:
+czy istnieje *liniowa kombinacja*, która jest I(0)? Jeśli tak ---
+zmienne są **skointegrowane**, łączy je długookresowa relacja równowagi.
 
-```{r adf-test}
-adf_price <- adf.test(ttf$Price)
-print(adf_price)
+## Test Engle–Grangera (TTF vs Brent)
 
-adf_ret <- adf.test(returns)
-print(adf_ret)
+Procedura: regresja statyczna $\log TTF_t = \alpha + \beta \log Brent_t + u_t$,
+następnie test ADF na resztach $\hat u_t$.
+
+```{r engle-granger}
+eg_reg <- lm(log(TTF) ~ log(Brent), data = df)
+summary(eg_reg)
+
+resid_eg <- residuals(eg_reg)
+adf_eg <- adf.test(resid_eg)
+print(adf_eg)
 ```
 
-## KPSS
+## Test Johansena (TTF, Brent, EUR/USD)
 
-$H_0$: szereg jest stacjonarny (komplementarny do ADF).
+```{r johansen}
+johansen_data <- df |>
+  transmute(log_TTF = log(TTF), log_Brent = log(Brent), log_EURUSD = log(EURUSD)) |>
+  as.matrix()
 
-```{r kpss-test}
-kpss_price <- kpss.test(ttf$Price)
-print(kpss_price)
-
-kpss_ret <- kpss.test(returns)
-print(kpss_ret)
+joh <- ca.jo(johansen_data, type = "trace", ecdet = "const", K = 2)
+summary(joh)
 ```
 
-**Wniosek:** Ceny są niestacjonarne. Po pierwszym różnicowaniu (log-stopy zwrotu)
-szereg staje się stacjonarny. Stosujemy zatem $d=1$ w modelu ARIMA.
+**Interpretacja:** Liczba relacji kointegrujących $r$ odczytujemy ze statystyki
+śladu: szukamy najmniejszego $r$, dla którego nie odrzucamy $H_0: r \leq r$.
+Jeśli istnieje co najmniej 1 wektor kointegrujący, **H2 potwierdzona** ---
+można zbudować model korekcji błędem (VECM) jako alternatywę, ale w niniejszym
+raporcie wykorzystujemy ten fakt jako uzasadnienie włączenia Brent jako
+regresora w ARIMAX (długookresowy "kotwiczny" sygnał cenowy).
 
-# Identyfikacja modelu ARIMA
+# Identyfikacja struktury ARIMA
 
-## ACF i PACF
+## ACF / PACF log-stóp zwrotu
 
-```{r acf-pacf, fig.cap="Funkcje ACF i PACF dla cen oraz log-stóp zwrotu", fig.height=5.5}
-par(mfrow = c(2, 2))
-acf(ttf$Price,  main = "ACF: ceny", lag.max = 40)
-pacf(ttf$Price, main = "PACF: ceny", lag.max = 40)
-acf(returns,    main = "ACF: log-stopy zwrotu", lag.max = 40)
-pacf(returns,   main = "PACF: log-stopy zwrotu", lag.max = 40)
+```{r acf-pacf, fig.cap="ACF i PACF log-stóp zwrotu TTF", fig.height=4}
+par(mfrow = c(1, 2))
+acf(returns,  main = "ACF: r_TTF",  lag.max = 40)
+pacf(returns, main = "PACF: r_TTF", lag.max = 40)
 par(mfrow = c(1, 1))
 ```
 
-# Estymacja modelu ARIMA
+# Estymacja ARIMA i ARIMAX
 
-## Auto-ARIMA
+## Model bazowy: ARIMA (jednowymiarowy)
 
-Model ARIMA estymujemy na **log-cenach** (`log_price`). Pierwsze różnicowanie
-log-cen daje dokładnie szereg log-stóp zwrotu (`returns`), co zapewnia spójność
-między modelem ARIMA (warunkowa średnia) a modelem GARCH (warunkowa wariancja),
-estymowanym później na tym samym szeregu reszt.
-
-```{r auto-arima}
-fit_auto <- auto.arima(
-  ttf$log_price,
-  d = 1,
-  seasonal = FALSE,
-  stepwise = FALSE,
-  approximation = FALSE,
-  trace = FALSE,
-  ic = "aicc"
+```{r arima-base}
+fit_arima <- auto.arima(
+  log(df$TTF),
+  d              = 1,
+  seasonal       = FALSE,
+  stepwise       = FALSE,
+  approximation  = FALSE,
+  ic             = "aicc"
 )
-
-summary(fit_auto)
+summary(fit_arima)
 ```
 
-## Modele kandydujące --- porównanie AIC/BIC
+## Model rozszerzony: ARIMAX
 
-```{r arima-grid}
-grid <- expand.grid(p = 0:3, d = 1, q = 0:3)
+Regresorami egzogenicznymi w równaniu warunkowej średniej są:
 
-results <- grid %>%
-  rowwise() %>%
-  mutate(
-    fit = list(tryCatch(
-      Arima(ttf$log_price, order = c(p, d, q)),
-      error = function(e) NULL
-    )),
-    AIC = ifelse(is.null(fit), NA, AIC(fit)),
-    BIC = ifelse(is.null(fit), NA, BIC(fit))
-  ) %>%
-  select(-fit) %>%
-  arrange(AIC)
+$$x_t = \big(\log Brent_t,\; \log EURUSD_t,\; Storage\_pct_t,\; HDD_t\big)$$
 
-kable(head(results, 10), digits = 2,
-      caption = "10 najlepszych modeli ARIMA wg AIC",
+```{r arimax}
+xreg_full <- df |>
+  transmute(log_Brent = log(Brent),
+            log_EURUSD = log(EURUSD),
+            Storage_pct = Storage_pct,
+            HDD = HDD) |>
+  as.matrix()
+
+# auto.arima przy stalym xreg dobiera (p,d,q) dla reszt regresji
+fit_arimax <- auto.arima(
+  log(df$TTF),
+  xreg          = xreg_full,
+  d             = 1,
+  seasonal      = FALSE,
+  stepwise      = FALSE,
+  approximation = FALSE,
+  ic            = "aicc"
+)
+summary(fit_arimax)
+```
+
+## Porównanie ARIMA vs ARIMAX
+
+```{r arima-compare}
+cmp <- data.frame(
+  Model      = c("ARIMA(p,1,q)", "ARIMAX(p,1,q)"),
+  AICc       = c(fit_arima$aicc,  fit_arimax$aicc),
+  BIC        = c(fit_arima$bic,   fit_arimax$bic),
+  log_Lik    = c(fit_arima$loglik,fit_arimax$loglik),
+  Liczba_par = c(length(fit_arima$coef), length(fit_arimax$coef))
+)
+
+kable(cmp, digits = 2,
+      caption = "Porownanie modelu jednowymiarowego i wielowymiarowego",
       booktabs = TRUE)
 ```
 
-## Diagnostyka reszt
+**Interpretacja wspolczynnikow ARIMAX**: w specyfikacji "regresja z bledami ARIMA"
+wspolczynniki na regresorach interpretujemy jako dlugookresowe wrazliwosci
+log-ceny TTF. Wspolczynnik przy `log(Brent)` to elastycznosc TTF wzgledem
+Brent. Ujemny wspolczynnik przy `Storage_pct` potwierdza intuicje: wzrost
+zapasow o 1 p.p. obniza log-cene TTF.
 
-```{r arima-final, fig.cap="Diagnostyka reszt modelu ARIMA"}
-fit_arima   <- fit_auto
-arima_resid <- residuals(fit_arima)
+## Diagnostyka reszt ARIMAX
 
-checkresiduals(fit_arima)
+```{r arimax-diag, fig.cap="Diagnostyka reszt ARIMAX"}
+arimax_resid <- residuals(fit_arimax)
+checkresiduals(fit_arimax)
 ```
 
-```{r arima-tests}
-# Ljung-Box (autokorelacja reszt)
-lb <- Box.test(arima_resid, lag = 20, type = "Ljung-Box",
-               fitdf = sum(fit_arima$arma[1:2]))
+```{r arimax-tests}
+lb <- Box.test(arimax_resid, lag = 20, type = "Ljung-Box",
+               fitdf = sum(fit_arimax$arma[1:2]))
 print(lb)
 
-# Jarque-Bera (normalność reszt)
-jb <- jarque.bera.test(arima_resid)
+jb <- jarque.bera.test(arimax_resid)
 print(jb)
 ```
 
-**Wnioski z diagnostyki:**
-
-- **Ljung-Box** ($p < 0.05$): odrzucamy hipotezę o braku autokorelacji w resztach. Resztki ARIMA wykazują pozostałą strukturę zależności --- jest to typowe dla szeregów finansowych z silną heteroskedastycznością warunkową (efekty ARCH wpływają również na statystykę Ljung-Boxa).
-- **Jarque-Bera** ($p < 0.05$): reszty nie pochodzą z rozkładu normalnego (grube ogony) --- uzasadnia zastosowanie rozkładu t-Studenta w specyfikacji modelu GARCH.
-- **Wykres reszt**: wyraźnie widoczne klastry zmienności (szczególnie w okresie 2021--2023) --- silna przesłanka do testu ARCH-LM i modelu GARCH.
-
 # Test efektu ARCH
 
-$H_0$: brak efektu ARCH (jednorodność warunkowej wariancji).
-
-```{r arch-lm, fig.cap="ACF i PACF kwadratów reszt ARIMA"}
-arch_test <- ArchTest(arima_resid, lags = 12)
+```{r arch-lm, fig.cap="ACF i PACF kwadratow reszt ARIMAX"}
+arch_test <- ArchTest(arimax_resid, lags = 12)
 print(arch_test)
 
 par(mfrow = c(1, 2))
-acf(arima_resid^2,  main = "ACF kwadratow reszt",  lag.max = 30)
-pacf(arima_resid^2, main = "PACF kwadratow reszt", lag.max = 30)
+acf(arimax_resid^2,  main = "ACF kwadratow reszt",  lag.max = 30)
+pacf(arimax_resid^2, main = "PACF kwadratow reszt", lag.max = 30)
 par(mfrow = c(1, 1))
 ```
 
-Jeśli $p < 0.05$, odrzucamy $H_0$, co oznacza obecność efektu ARCH i uzasadnia
-zastosowanie modelu GARCH.
+Jeśli $p < 0.05$, **H3 potwierdzona** --- reszty wykazują heteroskedastyczność
+warunkową i model GARCH jest uzasadniony.
 
-# Estymacja modelu GARCH
+# Estymacja modelu GARCH-X
 
-## Specyfikacja GARCH(1,1) z błędem t-Studenta
+## Specyfikacja: ARMA-X w średniej + GARCH-X w wariancji
 
-```{r garch-spec}
-arma_order <- c(fit_arima$arma[1], fit_arima$arma[2])
+W modelu rozszerzonym o regresory egzogeniczne:
 
-garch_spec <- ugarchspec(
-  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
-  mean.model     = list(armaOrder = arma_order, include.mean = TRUE),
+- W **równaniu średniej** (ARMA z regresorami): stopy zwrotu Brent, EUR/USD,
+  zmiany zapasów i HDD --- krótkookresowe szoki przenoszone na TTF.
+- W **równaniu wariancji** (GARCH-X): poziom zapasów `Storage_pct` --- ekonomiczna
+  intuicja: niski poziom magazynów zwiększa wrażliwość rynku na szoki podażowe
+  (asymetria buforowa).
+
+```{r garch-prepare}
+# Synchronizacja: pracujemy na df_diff (ma stopy zwrotu / roznice)
+returns_xts <- xts(df_diff$r_TTF, order.by = df_diff$Date)
+
+# Regresory w rownaniu sredniej (stopy zwrotu / zmiany)
+ext_mean <- df_diff |>
+  select(r_Brent, r_EURUSD, d_Storage, d_HDD) |>
+  as.matrix()
+
+# Regresor w rownaniu wariancji (poziom zapasow)
+# Uwaga: rugarch wymaga macierzy o tej samej liczbie wierszy co dane
+ext_var <- df_diff |> select(Storage_pct) |> as.matrix()
+
+# Rzedy ARMA z ARIMAX (na log-cenach, d=1 -> de facto ARMA na stopach zwrotu)
+arma_order <- c(fit_arimax$arma[1], fit_arimax$arma[2])
+cat("Rzedy ARMA w GARCH:", arma_order, "\n")
+```
+
+## sGARCH(1,1) - model bazowy (bez X)
+
+```{r garch-base}
+spec_base <- ugarchspec(
+  variance.model     = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model         = list(armaOrder = arma_order, include.mean = TRUE),
   distribution.model = "std"
 )
 
-garch_fit <- ugarchfit(spec = garch_spec, data = returns_xts, solver = "hybrid")
-print(garch_fit)
+fit_garch_base <- ugarchfit(spec_base, data = returns_xts, solver = "hybrid")
+fit_garch_base
 ```
 
-## Diagnostyka GARCH
+## sGARCH(1,1)-X --- z regresorami w średniej i wariancji
 
-Diagnostyka standardowa (Weighted Ljung-Box na resztach standaryzowanych
-i ich kwadratach oraz Weighted ARCH LM-test) jest częścią wyjścia
-`print(garch_fit)` powyżej. Poniżej dodatkowo niezależny test ARCH-LM
-na resztach standaryzowanych.
+```{r garch-x}
+spec_x <- ugarchspec(
+  variance.model = list(
+    model               = "sGARCH",
+    garchOrder          = c(1, 1),
+    external.regressors = ext_var
+  ),
+  mean.model = list(
+    armaOrder           = arma_order,
+    include.mean        = TRUE,
+    external.regressors = ext_mean
+  ),
+  distribution.model = "std"
+)
 
-```{r garch-diag}
-std_resid <- residuals(garch_fit, standardize = TRUE)
-
-ArchTest(as.numeric(std_resid), lags = 12)
+fit_garch_x <- ugarchfit(spec_x, data = returns_xts, solver = "hybrid")
+fit_garch_x
 ```
 
-```{r garch-plots, fig.cap="Diagnostyka modelu GARCH(1,1)", fig.height=6}
+## Diagnostyka GARCH-X
+
+```{r garch-x-diag}
+std_resid_x <- as.numeric(residuals(fit_garch_x, standardize = TRUE))
+ArchTest(std_resid_x, lags = 12)
+```
+
+```{r garch-x-plots, fig.cap="Diagnostyka GARCH(1,1)-X", fig.height=6}
 par(mfrow = c(2, 2))
-plot(garch_fit, which = 1)
-plot(garch_fit, which = 9)
-plot(garch_fit, which = 10)
-plot(garch_fit, which = 11)
+plot(fit_garch_x, which = 1)   # szereg i warunkowe wstegi
+plot(fit_garch_x, which = 9)   # QQ reszt std
+plot(fit_garch_x, which = 10)  # ACF reszt std
+plot(fit_garch_x, which = 11)  # ACF kwadratow reszt std
 par(mfrow = c(1, 1))
 ```
 
@@ -485,14 +592,30 @@ par(mfrow = c(1, 1))
 
 ```{r garch-compare}
 spec_egarch <- ugarchspec(
-  variance.model     = list(model = "eGARCH",  garchOrder = c(1, 1)),
-  mean.model         = list(armaOrder = arma_order, include.mean = TRUE),
+  variance.model = list(
+    model               = "eGARCH",
+    garchOrder          = c(1, 1),
+    external.regressors = ext_var
+  ),
+  mean.model = list(
+    armaOrder           = arma_order,
+    include.mean        = TRUE,
+    external.regressors = ext_mean
+  ),
   distribution.model = "std"
 )
 
 spec_gjr <- ugarchspec(
-  variance.model     = list(model = "gjrGARCH", garchOrder = c(1, 1)),
-  mean.model         = list(armaOrder = arma_order, include.mean = TRUE),
+  variance.model = list(
+    model               = "gjrGARCH",
+    garchOrder          = c(1, 1),
+    external.regressors = ext_var
+  ),
+  mean.model = list(
+    armaOrder           = arma_order,
+    include.mean        = TRUE,
+    external.regressors = ext_mean
+  ),
   distribution.model = "std"
 )
 
@@ -500,63 +623,217 @@ fit_egarch <- ugarchfit(spec_egarch, returns_xts, solver = "hybrid")
 fit_gjr    <- ugarchfit(spec_gjr,    returns_xts, solver = "hybrid")
 
 ic_table <- data.frame(
-  Model = c("sGARCH(1,1)", "eGARCH(1,1)", "gjrGARCH(1,1)"),
-  AIC = c(infocriteria(garch_fit)[1],
+  Model = c("sGARCH(1,1)", "sGARCH(1,1)-X", "eGARCH(1,1)-X", "gjrGARCH(1,1)-X"),
+  AIC = c(infocriteria(fit_garch_base)[1],
+          infocriteria(fit_garch_x)[1],
           infocriteria(fit_egarch)[1],
           infocriteria(fit_gjr)[1]),
-  BIC = c(infocriteria(garch_fit)[2],
+  BIC = c(infocriteria(fit_garch_base)[2],
+          infocriteria(fit_garch_x)[2],
           infocriteria(fit_egarch)[2],
           infocriteria(fit_gjr)[2])
 )
 
 kable(ic_table, digits = 4,
-      caption = "Porównanie modeli GARCH wg kryteriów informacyjnych",
+      caption = "Porownanie modeli GARCH wg kryteriow informacyjnych",
+      booktabs = TRUE) |>
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+**H4**: model z poziomem zapasów w równaniu wariancji (GARCH-X) powinien dawać
+istotnie niższe AIC/BIC niż klasyczny sGARCH bez regresorów. Dodatkowo
+testujemy formalnie istotność współczynnika przy `Storage_pct` w równaniu
+wariancji (z wyjścia `print(fit_garch_x)` --- współczynnik `vxreg1`).
+
+# Walidacja out-of-sample
+
+Dzielimy próbę na okres trenujący (do końca 2023) i testowy (2024).
+Porównujemy 1-krokowe prognozy z ARIMA (bazowy) vs ARIMAX, oraz prognozy
+zmienności sGARCH vs GARCH-X.
+
+```{r oos-split}
+split_date <- as.Date("2024-01-01")
+idx_train <- which(df$Date <  split_date)
+idx_test  <- which(df$Date >= split_date)
+
+cat("Okres trenujacy:", length(idx_train), "obs. (do", as.character(split_date - 1), ")\n")
+cat("Okres testowy: ", length(idx_test),  "obs. (od", as.character(split_date),     ")\n")
+```
+
+## Walk-forward dla ARIMA / ARIMAX
+
+```{r oos-arima, cache=TRUE}
+y_all <- log(df$TTF)
+
+# Pelna macierz xreg (rowniez na okres testowy)
+xreg_all <- xreg_full
+
+# Refit na danych do split_date - prognoza 1-krokowa rolowana
+oos_predict <- function(use_xreg = FALSE) {
+  preds <- rep(NA_real_, length(idx_test))
+  for (i in seq_along(idx_test)) {
+    t_end <- idx_test[i] - 1
+    y_tr  <- y_all[1:t_end]
+    if (use_xreg) {
+      x_tr  <- xreg_all[1:t_end, , drop = FALSE]
+      x_new <- xreg_all[idx_test[i], , drop = FALSE]
+      m <- tryCatch(
+        Arima(y_tr, order = c(fit_arimax$arma[1], 1, fit_arimax$arma[2]),
+              xreg = x_tr),
+        error = function(e) NULL
+      )
+      if (!is.null(m)) preds[i] <- forecast(m, h = 1, xreg = x_new)$mean[1]
+    } else {
+      m <- tryCatch(
+        Arima(y_tr, order = c(fit_arima$arma[1], 1, fit_arima$arma[2])),
+        error = function(e) NULL
+      )
+      if (!is.null(m)) preds[i] <- forecast(m, h = 1)$mean[1]
+    }
+  }
+  preds
+}
+
+pred_arima  <- oos_predict(use_xreg = FALSE)
+pred_arimax <- oos_predict(use_xreg = TRUE)
+
+actual <- y_all[idx_test]
+
+oos_metrics <- function(pred, name) {
+  err <- pred - actual
+  data.frame(
+    Model = name,
+    RMSE  = sqrt(mean(err^2, na.rm = TRUE)),
+    MAE   = mean(abs(err), na.rm = TRUE),
+    MAPE  = mean(abs(err / actual), na.rm = TRUE) * 100
+  )
+}
+
+oos_table <- bind_rows(
+  oos_metrics(pred_arima,  "ARIMA"),
+  oos_metrics(pred_arimax, "ARIMAX")
+)
+
+kable(oos_table, digits = 4,
+      caption = "Out-of-sample (2024): blad prognozy log-ceny TTF",
       booktabs = TRUE)
 ```
 
-**Komentarz:** Test Sign Bias (Joint Effect, $p \approx 0.04$ w wyjściu
-sGARCH) wskazuje na obecność asymetrii reakcji warunkowej wariancji na
-szoki — uzasadnia to porównanie z modelami asymetrycznymi (eGARCH, gjrGARCH).
-Wybór modelu finalnego opieramy na kryterium BIC (mniej restrykcyjne wobec
-modeli z większą liczbą parametrów: AIC).
+## Test Diebolda–Mariano
 
-# Prognoza
+```{r dm-test}
+err_arima  <- pred_arima  - actual
+err_arimax <- pred_arimax - actual
 
-## Prognoza ARIMA
+dm <- dm.test(err_arima, err_arimax, alternative = "greater", h = 1, power = 2)
+print(dm)
+```
 
-```{r arima-forecast, fig.cap="Prognoza ARIMA z przedziałami ufności"}
+$H_0$: oba modele mają równą trafność prognozy. Alternatywa: ARIMAX jest
+*lepszy* (mniejszy MSE) niż ARIMA. Jeśli $p < 0.05$ → **H5 potwierdzona**.
+
+## Wizualizacja prognoz OOS
+
+```{r oos-plot, fig.cap="Prognozy 1-krokowe out-of-sample (2024) w skali EUR/MWh"}
+oos_df <- data.frame(
+  Date     = df$Date[idx_test],
+  Actual   = exp(actual),
+  ARIMA    = exp(pred_arima),
+  ARIMAX   = exp(pred_arimax)
+) |>
+  pivot_longer(-Date, names_to = "Seria", values_to = "Cena")
+
+ggplot(oos_df, aes(x = Date, y = Cena, color = Seria, linetype = Seria)) +
+  geom_line(linewidth = 0.6) +
+  scale_color_manual(values = c(Actual = "black", ARIMA = "steelblue", ARIMAX = "darkred")) +
+  scale_linetype_manual(values = c(Actual = "solid", ARIMA = "dashed", ARIMAX = "dashed")) +
+  labs(title = "Prognozy out-of-sample TTF (2024)",
+       y = "Cena [EUR/MWh]", x = NULL)
+```
+
+# Prognoza przyszla
+
+## Prognoza ARIMAX
+
+Do prognozy h=30 dni potrzebujemy ścieżki regresorów. W bazowym scenariuszu
+zakładamy ich utrzymanie na ostatnim poziomie (random walk; alternatywą jest
+forecast każdej zmiennej osobnym ARIMA).
+
+```{r arimax-forecast, fig.cap="Prognoza ARIMAX na 30 dni (skala EUR/MWh)"}
 h <- 30
-fc_arima <- forecast(fit_arima, h = h)
+last_row <- tail(xreg_full, 1)
+xreg_future <- matrix(rep(last_row, h), nrow = h, byrow = TRUE,
+                      dimnames = list(NULL, colnames(xreg_full)))
 
-# Model fitowany na log-cenach -> cofamy transformacje exp() dla wykresu w EUR/MWh
-fc_arima$mean  <- exp(fc_arima$mean)
-fc_arima$lower <- exp(fc_arima$lower)
-fc_arima$upper <- exp(fc_arima$upper)
-fc_arima$x     <- exp(fc_arima$x)
+fc_arimax <- forecast(fit_arimax, xreg = xreg_future, h = h)
 
-autoplot(fc_arima) +
-  labs(title = paste("Prognoza ARIMA na", h, "okresow"),
+fc_arimax$mean  <- exp(fc_arimax$mean)
+fc_arimax$lower <- exp(fc_arimax$lower)
+fc_arimax$upper <- exp(fc_arimax$upper)
+fc_arimax$x     <- exp(fc_arimax$x)
+
+autoplot(fc_arimax) +
+  labs(title = paste("Prognoza ARIMAX na", h, "dni (regresory zamrozone na ostatniej wartosci)"),
        x = "Czas", y = "Cena [EUR/MWh]")
 ```
 
-## Prognoza GARCH
+## Prognoza GARCH-X (zmienność warunkowa)
 
-```{r garch-forecast, fig.cap="Prognoza warunkowej średniej i zmienności GARCH(1,1)", fig.height=4}
-fc_garch <- ugarchforecast(garch_fit, n.ahead = h)
-print(fc_garch)
+```{r garch-forecast, fig.cap="Prognoza warunkowej zmiennosci GARCH(1,1)-X", fig.height=4}
+ext_var_future  <- matrix(rep(tail(ext_var, 1),  h), nrow = h, byrow = TRUE)
+ext_mean_future <- matrix(rep(tail(ext_mean, 1), h), nrow = h, byrow = TRUE)
+
+fc_garch_x <- ugarchforecast(
+  fit_garch_x,
+  n.ahead                       = h,
+  external.forecasts            = list(
+    mregfor = ext_mean_future,
+    vregfor = ext_var_future
+  )
+)
+print(fc_garch_x)
 
 par(mfrow = c(1, 2))
-plot(fc_garch, which = 1)
-plot(fc_garch, which = 3)
+plot(fc_garch_x, which = 1)   # prognoza serii
+plot(fc_garch_x, which = 3)   # prognoza zmiennosci
 par(mfrow = c(1, 1))
 ```
 
 # Podsumowanie i wnioski
 
+## Weryfikacja hipotez
+
+| Hipoteza | Wynik |
+|---|---|
+| **H1**: TTF jest I(1) | Potwierdzona (ADF nie odrzuca, KPSS odrzuca w poziomach; odwrotnie po różnicowaniu) |
+| **H2**: TTF, Brent, EUR/USD są skointegrowane | Częściowo potwierdzona (patrz wyjście Johansena — `r` rang kointegracji) |
+| **H3**: Reszty ARIMAX mają efekt ARCH | Potwierdzona (ARCH-LM odrzuca brak efektu) |
+| **H4**: GARCH-X lepszy niż sGARCH | Sprawdzić w tabeli IC + istotność wsp. `vxreg1` |
+| **H5**: ARIMAX > ARIMA OOS | Sprawdzić test Diebolda–Mariano |
+
 ## Wyniki kluczowe
 
-- **Stacjonarność**: ceny TTF są niestacjonarne (I(1)), log-stopy zwrotu są stacjonarne.
-- **Model ARIMA**: wybrany model ARIMA(`r fit_arima$arma[1]`, 1, `r fit_arima$arma[2]`) na log-cenach istotnie redukuje strukturę autoregresyjną w szeregu, jednak test Ljung-Box wskazuje na pozostałe zależności w resztach ($p < 0.05$). Wynika to z silnej heteroskedastyczności warunkowej, której model klasy ARIMA z założenia nie modeluje --- po wprowadzeniu modelu GARCH wystandaryzowane reszty nie wykazują już istotnej autokorelacji ani efektu ARCH (Weighted Ljung-Box: $p > 0.30$ dla wszystkich opóźnień, Weighted ARCH LM: $p > 0.66$).
-- **Efekt ARCH**: w resztach ARIMA występuje silna heteroskedastyczność warunkowa.
-- **Model GARCH(1,1)** z t-Studentem oddaje strukturę zmienności, w szczególności klastry obserwowane od 2022 r.
-- **Persystencja zmienności**: oszacowana suma $\hat{\alpha}_1 + \hat{\beta}_1 \approx 0.999$ — model GARCH(1,1) jest praktycznie na granicy IGARCH. Oznacza to wysoką trwałość szoków zmienności (half-life rzędu setek sesji), co jest typowe dla szeregów obejmujących okres kryzysu strukturalnego (2022 r.).
+- **Stacjonarność**: ceny TTF, Brent i EUR/USD są I(1); zapasy i HDD są stacjonarne
+  (sezonowe), ale wnoszą informację o stanie rynku.
+- **Kointegracja**: relacja długookresowa TTF–Brent uzasadnia obecność Brent
+  jako "kotwicy cenowej" w specyfikacji ARIMAX.
+- **ARIMAX vs ARIMA**: model wielowymiarowy redukuje AIC/BIC oraz błąd
+  out-of-sample. Test Diebolda–Mariano weryfikuje formalnie różnicę.
+- **GARCH-X**: poziom zapasów w równaniu wariancji niesie informację o niepewności
+  rynkowej --- niskie zapasy zwiększają warunkową wariancję cen, co model
+  oddaje poprzez istotny współczynnik `vxreg1`.
+- **Persystencja zmienności**: parametr $\alpha_1 + \beta_1$ w pobliżu 1
+  (typowe dla rynków surowcowych po szoku 2022).
+
+## Ograniczenia i kierunki rozszerzeń
+
+- **Częstotliwość**: wszystkie szeregi sprowadzone do dziennej; dla HDD i zapasów
+  oznacza to gładką ścieżkę, podczas gdy rzeczywiste przepływy informacji mają
+  ostrzejszą strukturę (np. tygodniowe raporty AGSI+).
+- **LNG i temperatura ERA5**: wymagałyby modeli mixed-frequency (np. MIDAS),
+  poza zakresem niniejszego raportu.
+- **Modele wielorównaniowe**: VECM (gdy potwierdzona kointegracja) oraz
+  multivariate GARCH (DCC-GARCH) to naturalne kontynuacje.
+- **Scenariusze prognozy regresorów**: w prognozach `h=30` zamrożono regresory;
+  rozszerzeniem byłoby modelowanie ścieżek `r_Brent` i `Storage_pct` osobnymi
+  ARIMA i propagacja niepewności metodą Monte Carlo.

@@ -26,6 +26,9 @@ Thumbs.db
 .vscode/
 .idea/
 
-.csv
+# Wyrenderowane raporty
+*.html
 
-.html
+# Zmienne srodowiskowe (m.in. AGSI_API_KEY)
+.Renviron
+.env
