@@ -47,9 +47,70 @@ read_optional <- function(path) {
   if (file.exists(path)) read_csv(path, show_col_types = FALSE) else NULL
 }
 
+# Storage z AGSI+: obslugujemy oba formaty
+#   (a) z API (skrypt 01_fetch_data.R): kolumny Date, Storage_pct, ...
+#   (b) z manualnego eksportu CSV na stronie AGSI+:
+#         typowe naglowki: "Gas Day", "Full", "Full (%)", ew. ze srednikami zamiast przecinkow
+read_storage <- function() {
+  # Spróbuj kilku popularnych lokalizacji i nazw plików
+  candidates <- c(
+    file.path(RAW_DIR, "storage_eu.csv"),
+    file.path("data", "storage_eu.csv"),
+    file.path(RAW_DIR, "agsi_eu.csv"),
+    file.path("data", "agsi_eu.csv")
+  )
+  path <- candidates[file.exists(candidates)][1]
+  if (is.na(path)) return(NULL)
+
+  # Auto-wykryj separator (przecinek lub srednik)
+  first_line <- readLines(path, n = 1, warn = FALSE)
+  sep <- if (lengths(regmatches(first_line, gregexpr(";", first_line))) >
+             lengths(regmatches(first_line, gregexpr(",", first_line)))) ";" else ","
+
+  raw <- read.csv(path, sep = sep, stringsAsFactors = FALSE,
+                  check.names = FALSE, na.strings = c("", "NA", "-"))
+
+  # Znajdz kolumne daty
+  date_col <- names(raw)[grepl("^(date|gas\\s*day|gasdaystart)$",
+                               names(raw), ignore.case = TRUE)][1]
+  if (is.na(date_col)) {
+    warning("Nie znalazlem kolumny daty w pliku storage. Kolumny: ",
+            paste(names(raw), collapse = ", "))
+    return(NULL)
+  }
+
+  # Znajdz kolumne % wypelnienia
+  full_col <- names(raw)[grepl("^(full|storage_pct|full\\s*\\(%\\))$",
+                               names(raw), ignore.case = TRUE)][1]
+  if (is.na(full_col)) {
+    # Heurystyka: kolumna z 'full' w nazwie i wartosciami 0-100
+    full_candidates <- names(raw)[grepl("full", names(raw), ignore.case = TRUE)]
+    full_col <- full_candidates[1]
+  }
+  if (is.na(full_col)) {
+    warning("Nie znalazlem kolumny 'Full (%)' w pliku storage.")
+    return(NULL)
+  }
+
+  # Parser daty (AGSI+ uzywa YYYY-MM-DD)
+  dates <- suppressWarnings(parse_date_time(
+    raw[[date_col]], orders = c("ymd", "dmy", "mdy")
+  ))
+  pct <- suppressWarnings(as.numeric(gsub(",", ".", as.character(raw[[full_col]]))))
+
+  res <- data.frame(Date = as.Date(dates), Storage_pct = pct) |>
+    filter(!is.na(Date), !is.na(Storage_pct)) |>
+    arrange(Date) |>
+    distinct(Date, .keep_all = TRUE)
+
+  cat("Storage  : zrodlo =", path, "(separator:", sep, ", kolumna daty:",
+      date_col, ", kolumna %:", full_col, ")\n")
+  res
+}
+
 brent   <- read_optional(file.path(RAW_DIR, "brent.csv"))
 eurusd  <- read_optional(file.path(RAW_DIR, "eurusd.csv"))
-storage <- read_optional(file.path(RAW_DIR, "storage_eu.csv"))
+storage <- read_storage()
 weather <- read_optional(file.path(RAW_DIR, "weather_hdd.csv"))
 
 if (!is.null(brent))   cat("Brent    :", nrow(brent),   "obs.\n")
