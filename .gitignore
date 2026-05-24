@@ -27,7 +27,7 @@ Thumbs.db
 .idea/
 
 # Wyrenderowane raporty
-*.html
+*.pdf
 
 # Zmienne srodowiskowe (m.in. AGSI_API_KEY)
 .Renviron
