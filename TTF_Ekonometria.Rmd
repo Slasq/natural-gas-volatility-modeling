@@ -29,17 +29,28 @@ header-includes:
   - \usepackage{multirow}
   - \usepackage{wrapfig}
   - \usepackage{colortbl}
+  - \usepackage{titling}
+  - \pretitle{\begin{center}\large\textbf{Politechnika Rzeszowska}\\[1.5em]\LARGE}
+  - \posttitle{\par\end{center}\vskip 0.5em}
+  - \usepackage{fancyhdr}
+  - \pagestyle{fancy}
+  - \fancyhf{}
+  - \fancyfoot[R]{\thepage}
+  - \renewcommand{\headrulewidth}{0pt}
+  - \renewcommand{\footrulewidth}{0pt}
+  - \fancypagestyle{plain}{\fancyhf{}\fancyfoot[R]{\thepage}\renewcommand{\headrulewidth}{0pt}\renewcommand{\footrulewidth}{0pt}}
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
-  echo       = TRUE,
-  warning    = FALSE,
-  message    = FALSE,
-  fig.width  = 8,
-  fig.height = 4.5,
-  fig.align  = "center",
-  cache      = FALSE
+  echo        = TRUE,
+  warning     = FALSE,
+  message     = FALSE,
+  fig.width   = 6.5,
+  fig.height  = 4,
+  fig.align   = "center",
+  out.width   = "100%",
+  cache       = FALSE
 )
 set.seed(42)
 ```
@@ -104,7 +115,7 @@ zmienności szeregu czasowego.
 Klasyczna analiza mikroekonomiczna pokazuje, jak szoki popytowe i podażowe
 wpływają na cenę równowagi rynkowej.
 
-```{r supply-demand-plot, fig.cap="Wpływ szoków popytowych i podażowych na rynek gazu TTF", fig.width=9, fig.height=4.5, echo=FALSE}
+```{r supply-demand-plot, fig.cap="Wpływ szoków popytowych i podażowych na rynek gazu TTF", fig.width=6.5, fig.height=8, echo=FALSE}
 demand_base  <- function(q) 100 - q
 supply_base  <- function(q) 20 + q
 demand_shift <- function(q) 130 - q
@@ -142,7 +153,7 @@ p2 <- ggplot() +
        x = "Ilosc Q (gaz)", y = "Cena P [EUR/MWh]", color = NULL) +
   theme(legend.position = "bottom")
 
-p1 + p2
+p1 / p2
 ```
 
 **Panel A**: mroźna zima przesuwa krzywą popytu w prawo — wyższa cena, wyższy wolumen.
@@ -178,6 +189,42 @@ poziom zapasów magazynowych UE oraz indeks Heating Degree Days (HDD).
 
 Wszystkie szeregi pobierane online są cache'owane do `data/raw/` — drugi knit nie
 powtarza pobierania.
+
+## Uzasadnienie ekonomiczne wyboru zmiennych
+
+Dobór regresorów nie jest dowolny — każda zmienna ma jednoznaczne, *a priori*
+ekonomiczne uzasadnienie zakorzenione w teorii rynku surowców energetycznych
+i potwierdzone w literaturze empirycznej (Geman 2005, Pindyck 2001,
+Asche et al. 2017, Heather 2019). Spodziewane znaki współczynników wynikają
+z konkretnych mechanizmów rynkowych:
+
+| Zmienna | Mechanizm ekonomiczny | Znak |
+|---|---|:---:|
+| `log(Brent)`   | (1) Substytucyjność energetyczna gazu i ropy w energetyce, petrochemii i transporcie; (2) **indeksacja LNG do ropy** — część kontraktów długoterminowych nadal stosuje slope ok. 10–13% × Brent; (3) wspólne czynniki kosztowe (transport, ubezpieczenia, ryzyko geopolityczne). | **+** |
+| `log(EURUSD)`  | Kontrakty LNG i nominalna cena Brent są denominowane w **USD**. Deprecjacja EUR (spadek EURUSD) → droższy import w EUR → presja wzrostowa na cenę TTF. Mocniejszy EUR działa odwrotnie. | **−** |
+| `Storage_pct`  | *Theory of storage* (Working 1933, Pindyck 2001): niskie zapasy → wysoka **convenience yield** → wysoka cena spot. Wskaźnik napełnienia magazynów UE jest bezpośrednim sygnałem napięcia popyt–podaż. | **−** |
+| `HDD`          | Heating Degree Days mierzy bezpośrednio **popyt na ogrzewanie**. W UE ok. 40% zużycia gazu trafia do sektora bytowo-komunalnego; każdy dodatkowy HDD zwiększa krótkookresowy popyt. | **+** |
+
+**Świadomie *nie* włączamy** niektórych potencjalnie istotnych zmiennych:
+
+- **Cena prądu (np. niemiecki Baseload)** — w europejskim merit-order to gaz
+  często ustawia cenę krańcową prądu, więc relacja jest endogeniczna; włączenie
+  tej zmiennej wprowadziłoby *simultaneity bias*.
+- **Import LNG / przepływy rurociągowe (Entry-Exit)** — dostępne tylko w
+  częstotliwości miesięcznej; włączenie do modelu dziennego wymagałoby
+  interpolacji ad hoc lub modelu mixed-frequency (MIDAS).
+- **Henry Hub (USA)** — po 2022 r. silnie skointegrowany globalnie z Brent,
+  duplikowałby informację cenową; ponadto arbitraż LNG transferuje szok HH
+  do TTF z opóźnieniem, którego nie modeluje statyczny regresor.
+- **CO₂ EUA (uprawnienia do emisji)** — wpływa na koszty alternatywy
+  węglowej, ale efekt jest pośredni i podlega silnym szokom regulacyjnym
+  (rezerwa MSR, fit-for-55), trudnym do oddzielenia od trendu cenowego TTF.
+
+Formalna weryfikacja, czy te *a priori* wybrane regresory są również
+**statystycznie istotne** (i czy nie występuje wśród nich współliniowość),
+odbywa się w **sekcji 6: *Selekcja zmiennych objaśniających*** — bezpośrednio
+po sprawdzeniu stacjonarności, a przed właściwym modelowaniem ekonometrycznym
+(kointegracja, ARIMA, ARIMAX, GARCH).
 
 ## Brent i EUR/USD (FRED)
 
@@ -439,7 +486,7 @@ stats <- df |>
   ))) |>
   pivot_longer(everything(),
                names_to  = c("Zmienna", ".value"),
-               names_sep = "_(?=[A-Z])")
+               names_sep = "_(?=[A-Z][a-z])")
 
 kable(stats, digits = 2, caption = "Statystyki opisowe", booktabs = TRUE) |>
   kable_styling(latex_options = c("striped", "HOLD_position"))
@@ -449,12 +496,12 @@ kable(stats, digits = 2, caption = "Statystyki opisowe", booktabs = TRUE) |>
 
 ## Wykresy szeregów
 
-```{r plot-multi, fig.cap="Ewolucja wszystkich analizowanych szeregów", fig.height=8}
+```{r plot-multi, fig.cap="Ewolucja wszystkich analizowanych szeregów", fig.width=6.5, fig.height=9}
 df |>
   pivot_longer(-Date, names_to = "Zmienna", values_to = "Wartosc") |>
   ggplot(aes(Date, Wartosc, color = Zmienna)) +
   geom_line(linewidth = 0.5, show.legend = FALSE) +
-  facet_wrap(~ Zmienna, scales = "free_y", ncol = 2) +
+  facet_wrap(~ Zmienna, scales = "free_y", ncol = 1) +
   geom_vline(xintercept = as.Date("2022-02-24"),
              linetype = "dashed", color = "red", alpha = 0.6) +
   labs(title = "Szeregi czasowe: TTF i regresory fundamentalne",
@@ -588,6 +635,261 @@ kable(diffs_tests, caption = "Stacjonarnosc - pierwsze roznice", booktabs = TRUE
 
 **Wniosek:** szeregi cenowe są I(1), pierwsze różnice stacjonarne — **H1 potwierdzona**.
 
+# Selekcja zmiennych objaśniających
+
+Mając już *a priori* uzasadnienie ekonomiczne (sekcja 3.2 — *Uzasadnienie
+ekonomiczne wyboru zmiennych*) i potwierdzony rząd integracji szeregów (sekcja 5 — wszystkie
+ceny I(1), pierwsze różnice I(0)), zanim przejdziemy do modelowania wykonujemy
+formalną statystyczną selekcję regresorów. Cel: ustalić, które z czterech
+kandydatów (`log(Brent)`, `log(EURUSD)`, `Storage_pct`, `HDD`) faktycznie
+wnoszą informację o cenie TTF i nie wprowadzają patologii (silna współliniowość).
+
+## Metodologia selekcji
+
+W docelowym modelu ARIMAX(p, 1, q) regresory wchodzą **w poziomach**, ale
+ze względu na różnicowanie zmiennej zależnej $\log TTF_t$ równanie efektywnie
+opisuje krótkookresowe relacje między **pierwszymi różnicami**. Dlatego selekcji
+dokonujemy na pomocniczej regresji statycznej w pierwszych różnicach:
+
+$$\Delta \log TTF_t = \alpha + \beta_1 \Delta \log Brent_t + \beta_2 \Delta \log EURUSD_t + \beta_3 \Delta Storage_t + \beta_4 \Delta HDD_t + u_t$$
+
+Zalety tego podejścia:
+
+- regresory są I(0) (potwierdzone testami ADF/KPSS w sekcji 5) → t-statystyki OLS są **statystycznie poprawne** (brak ryzyka *spurious regression* obecnego w regresji w poziomach);
+- procedura jest niezależna od późniejszego doboru rzędów ARMA — selekcja regresorów odbywa się przed identyfikacją dynamiki, zgodnie z dobrą praktyką *general-to-specific* (Hendry);
+- VIF policzony na regresorach w różnicach jest miarą współliniowości szoków, nie poziomów, ale w przypadku regresorów I(1) jest to *jedyna* sensowna interpretacja (VIF na poziomach byłby zdominowany przez wspólny trend).
+
+Procedura w czterech krokach: **(1)** test współliniowości VIF, **(2)** ocena
+istotności regresorów testem t, **(3)** eliminacja wsteczna (próg $p > 0.10$),
+**(4)** porównanie modeli zagnieżdżonych kryteriami AIC/BIC.
+
+## Krok 1 — Test współliniowości (VIF)
+
+```{r vif-test}
+ols_vars <- c("r_Brent", "r_EURUSD")
+if (has_storage) ols_vars <- c(ols_vars, "d_Storage")
+if (has_hdd)     ols_vars <- c(ols_vars, "d_HDD")
+
+ols_data <- df_diff |>
+  select(r_TTF, all_of(ols_vars)) |>
+  drop_na()
+
+cat("Liczba obserwacji w regresji selekcyjnej:", nrow(ols_data), "\n")
+cat("Regresory testowane:", paste(ols_vars, collapse = ", "), "\n\n")
+
+ols_full <- lm(reformulate(ols_vars, "r_TTF"), data = ols_data)
+
+vif_manual <- function(X) {
+  X <- as.matrix(X)
+  k <- ncol(X)
+  vifs <- numeric(k)
+  for (i in seq_len(k)) {
+    r2 <- summary(lm(X[, i] ~ X[, -i]))$r.squared
+    vifs[i] <- 1 / (1 - r2)
+  }
+  setNames(vifs, colnames(X))
+}
+
+ols_X <- as.matrix(ols_data[, ols_vars])
+vif_values <- vif_manual(ols_X)
+
+vif_df <- tibble(
+  Regresor = names(vif_values),
+  VIF      = round(vif_values, 2),
+  Diagnoza = case_when(
+    vif_values > 10 ~ "silna wspolliniowosc",
+    vif_values > 5  ~ "umiarkowana",
+    TRUE            ~ "OK"
+  )
+)
+
+kable(vif_df,
+      caption = "Wspolczynniki inflacji wariancji (VIF) regresorow w pierwszych roznicach",
+      booktabs = TRUE) |>
+  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = FALSE)
+```
+
+**Reguła kciuka**: $VIF < 5$ — brak problemu, $5 \le VIF < 10$ — umiarkowana
+współliniowość (akceptowalna), $VIF \ge 10$ — silna współliniowość (sygnał do
+usunięcia regresora). Definicja: $VIF_j = 1 / (1 - R_j^2)$, gdzie $R_j^2$ to
+współczynnik determinacji pomocniczej regresji $X_j$ na pozostałych regresorach.
+
+## Krok 2 — Istotność regresorów (test t)
+
+```{r ols-tstats}
+ols_summary <- summary(ols_full)
+coef_table  <- ols_summary$coefficients
+
+sig_table <- tibble(
+  Regresor = rownames(coef_table)[-1],
+  Wsp      = round(coef_table[-1, "Estimate"],   5),
+  SE       = round(coef_table[-1, "Std. Error"], 5),
+  t        = round(coef_table[-1, "t value"],    2),
+  p_value  = round(coef_table[-1, "Pr(>|t|)"],   4),
+  Istotny  = ifelse(coef_table[-1, "Pr(>|t|)"] < 0.05, "TAK", "nie")
+)
+
+kable(sig_table,
+      caption = "Istotnosc regresorow w statycznej regresji OLS (pierwsze roznice)",
+      booktabs = TRUE) |>
+  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = FALSE)
+
+cat("R^2 pelnego OLS:", round(ols_summary$r.squared,      4),
+    "\nF-statystyka :", round(ols_summary$fstatistic[1],  2),
+    "\np-value F    :", format.pval(pf(ols_summary$fstatistic[1],
+                                       ols_summary$fstatistic[2],
+                                       ols_summary$fstatistic[3],
+                                       lower.tail = FALSE)), "\n")
+```
+
+## Krok 3 — Eliminacja wsteczna (general-to-specific)
+
+W każdej iteracji usuwamy regresor o najwyższym $p$-value powyżej 0.10, ponownie
+estymujemy OLS i powtarzamy aż wszystkie pozostałe regresory są istotne.
+
+```{r backward-elim}
+current_vars <- ols_vars
+fit_current  <- ols_full
+
+elimination_log <- tibble(
+  Krok        = integer(),
+  Eliminowana = character(),
+  p_value     = numeric(),
+  R2_po       = numeric(),
+  AIC_po      = numeric(),
+  BIC_po      = numeric(),
+  Pozostale   = character()
+)
+step <- 0
+
+repeat {
+  cf_table <- summary(fit_current)$coefficients
+  pv_regs  <- cf_table[current_vars, "Pr(>|t|)"]
+  pv_regs  <- pv_regs[!is.na(pv_regs)]
+
+  if (length(pv_regs) == 0 || max(pv_regs) < 0.10) break
+
+  drop_var     <- names(which.max(pv_regs))
+  max_p        <- unname(max(pv_regs))
+  current_vars <- setdiff(current_vars, drop_var)
+
+  fit_current <- if (length(current_vars) == 0) {
+    lm(r_TTF ~ 1, data = ols_data)
+  } else {
+    lm(reformulate(current_vars, "r_TTF"), data = ols_data)
+  }
+
+  step <- step + 1
+  elimination_log <- bind_rows(elimination_log, tibble(
+    Krok        = step,
+    Eliminowana = drop_var,
+    p_value     = round(max_p, 4),
+    R2_po       = round(summary(fit_current)$r.squared, 4),
+    AIC_po      = round(AIC(fit_current), 2),
+    BIC_po      = round(BIC(fit_current), 2),
+    Pozostale   = if (length(current_vars)) paste(current_vars, collapse = ", ") else "(brak)"
+  ))
+}
+
+if (nrow(elimination_log) == 0) {
+  cat("Wszystkie regresory istotne na poziomie 0.10 - eliminacja nie usuwa zadnego.\n")
+} else {
+  kable(elimination_log,
+        caption = "Przebieg eliminacji wstecznej (prog usuniecia: p > 0.10)",
+        booktabs = TRUE) |>
+    kable_styling(latex_options = c("striped", "HOLD_position"), full_width = FALSE)
+}
+
+selected_diff_vars <- current_vars
+
+cat("\nFinalny zbior regresorow (w pierwszych roznicach):\n  ",
+    if (length(selected_diff_vars)) paste(selected_diff_vars, collapse = ", ") else "(zaden)",
+    "\n")
+```
+
+## Krok 4 — Porównanie modeli zagnieżdżonych (AIC / BIC)
+
+Sprawdzamy systematycznie sensowne podzbiory regresorów — pełny, wynik
+eliminacji wstecznej oraz warianty teoretyczne (tylko Brent jako "kotwica
+cenowa", same regresory popytowe itd.).
+
+```{r nested-ols}
+build_ols <- function(vars) {
+  if (length(vars) == 0) {
+    lm(r_TTF ~ 1, data = ols_data)
+  } else {
+    lm(reformulate(vars, "r_TTF"), data = ols_data)
+  }
+}
+
+candidates <- list(
+  "Pelny (wszystkie regresory)" = ols_vars,
+  "Bez d_HDD"                   = setdiff(ols_vars, "d_HDD"),
+  "Bez d_Storage"               = setdiff(ols_vars, "d_Storage"),
+  "Tylko Brent + EURUSD"        = intersect(ols_vars, c("r_Brent", "r_EURUSD")),
+  "Tylko Brent"                 = intersect(ols_vars, "r_Brent"),
+  "Po eliminacji wstecznej"     = selected_diff_vars,
+  "Sama stala"                  = character(0)
+)
+candidates <- candidates[!duplicated(lapply(candidates, function(x) sort(as.character(x))))]
+
+nested_table <- imap_dfr(candidates, function(vars, name) {
+  m <- tryCatch(build_ols(vars), error = function(e) NULL)
+  if (is.null(m)) return(tibble())
+  s <- summary(m)
+  tibble(
+    Wariant   = name,
+    Regresory = if (length(vars)) paste(vars, collapse = ", ") else "(brak)",
+    k         = length(vars),
+    R2_adj    = round(s$adj.r.squared, 4),
+    AIC       = round(AIC(m), 2),
+    BIC       = round(BIC(m), 2)
+  )
+}) |> arrange(BIC)
+
+kable(nested_table,
+      caption = "Porownanie zagniezdzonych wariantow OLS w roznicach (sortowane po BIC)",
+      booktabs = TRUE) |>
+  kable_styling(latex_options = c("striped", "HOLD_position"))
+```
+
+## Wnioski z procedury selekcji
+
+Selekcja zmiennych łączy trzy niezależne kryteria:
+
+1. **A priori ekonomiczne** (sekcja 3.2) — każda z 4 zmiennych ma uzasadniony mechanizm rynkowy.
+2. **Test t Walda na regresorach** w statycznej regresji OLS (różnice) — zachowujemy regresory istotne na poziomie 0.05–0.10.
+3. **Eliminacja wsteczna + porównanie zagnieżdżone po BIC** — produkujemy minimalny zbiór regresorów istotnych statystycznie i sprawdzamy, czy parsymonijny model nie wypada lepiej informacyjnie od pełnego.
+
+```{r mapping-to-arimax}
+var_mapping <- c(
+  r_Brent   = "log_Brent",
+  r_EURUSD  = "log_EURUSD",
+  d_Storage = "Storage_pct",
+  d_HDD     = "HDD"
+)
+
+selected_arimax_vars <- unname(var_mapping[selected_diff_vars])
+
+cat("Wybrane regresory (mapowanie na wersje w poziomach dla ARIMAX):\n")
+for (v in selected_diff_vars) {
+  cat("  ", v, " -> ", var_mapping[[v]], "\n", sep = "")
+}
+cat("\nOdrzucone regresory:\n  ",
+    paste(setdiff(ols_vars, selected_diff_vars), collapse = ", "), "\n")
+```
+
+**Mapowanie różnice → poziomy**: w pomocniczej regresji selekcyjnej operowaliśmy
+na różnicach (`r_Brent`, `r_EURUSD`, `d_Storage`, `d_HDD`), które są bezpośrednio
+proporcjonalne do regresorów w poziomach używanych w ARIMAX (`log_Brent`,
+`log_EURUSD`, `Storage_pct`, `HDD`). Decyzja o usunięciu regresora w wersji
+różnicowej automatycznie usuwa jego odpowiednik w wersji poziomowej.
+
+W dalszej części analizy szacujemy **dwa modele ARIMAX**:
+
+- **ARIMAX pełny** — z wszystkimi 4 regresorami (model referencyjny, *general unrestricted model*);
+- **ARIMAX po selekcji** — tylko z wybranymi regresorami (model docelowy, używany w prognozach i porównaniach OOS).
+
 # Analiza kointegracji
 
 ## Engle-Granger (TTF vs Brent)
@@ -642,8 +944,8 @@ braku kointegracji na poziomie 5%. **H2 odrzucona** lub co najwyżej marginalna.
 
 # Identyfikacja ARIMA
 
-```{r acf-pacf, fig.cap="ACF i PACF log-stop zwrotu TTF", fig.height=4}
-par(mfrow = c(1, 2))
+```{r acf-pacf, fig.cap="ACF i PACF log-stop zwrotu TTF", fig.width=6.5, fig.height=7}
+par(mfrow = c(2, 1))
 acf(returns,  main = "ACF: r_TTF",  lag.max = 40)
 pacf(returns, main = "PACF: r_TTF", lag.max = 40)
 par(mfrow = c(1, 1))
@@ -675,7 +977,11 @@ summary(fit_arima)
 
 ## Model rozszerzony: ARIMAX
 
-Regresory: $\log Brent$, $\log EURUSD$, $Storage\_pct$, $HDD$.
+Wykorzystujemy wyniki sekcji 6 — *Selekcja zmiennych objaśniających*. Szacujemy
+**dwa modele**:
+
+- **ARIMAX pełny** ze wszystkimi 4 kandydatami (model referencyjny, GUM); pozwala porównać AICc/BIC z modelem po selekcji i pokazać, czy odrzucenie zmiennych było uzasadnione informacyjnie;
+- **ARIMAX po selekcji** — tylko z regresorami, które przeszły procedurę z sekcji 6 (model docelowy, używany w dalszej analizie OOS, w GARCH-X oraz w prognozie).
 
 ```{r arimax}
 xreg_list <- list(
@@ -685,30 +991,57 @@ xreg_list <- list(
 if (has_storage) xreg_list$Storage_pct <- df$Storage_pct
 if (has_hdd)     xreg_list$HDD         <- df$HDD
 
-xreg_full <- as.matrix(as.data.frame(xreg_list))
-cat("Regresory w ARIMAX:", paste(colnames(xreg_full), collapse = ", "), "\n")
+xreg_full_all <- as.matrix(as.data.frame(xreg_list))
+cat("Regresory w pelnym ARIMAX:", paste(colnames(xreg_full_all), collapse = ", "), "\n")
 
-fit_arimax <- auto.arima(
+fit_arimax_full <- auto.arima(
   log(df$TTF),
-  xreg = xreg_full,
+  xreg = xreg_full_all,
   d = 1, seasonal = FALSE,
   stepwise = FALSE, approximation = FALSE, ic = "aicc"
 )
-summary(fit_arimax)
+cat("\n--- ARIMAX pelny (general unrestricted model) ---\n")
+summary(fit_arimax_full)
+
+if (exists("selected_arimax_vars") && length(selected_arimax_vars) > 0) {
+  xreg_sel <- xreg_full_all[, selected_arimax_vars, drop = FALSE]
+  fit_arimax_sel <- auto.arima(
+    log(df$TTF),
+    xreg = xreg_sel,
+    d = 1, seasonal = FALSE,
+    stepwise = FALSE, approximation = FALSE, ic = "aicc"
+  )
+  cat("\n--- ARIMAX po selekcji (model docelowy) ---\n")
+  cat("Regresory:", paste(selected_arimax_vars, collapse = ", "), "\n")
+  summary(fit_arimax_sel)
+
+  fit_arimax <- fit_arimax_sel
+  xreg_full  <- xreg_sel
+} else {
+  warning("Selekcja wykluczyla wszystkie regresory - fallback do pelnego ARIMAX dla spojnosci downstream.")
+  fit_arimax_sel <- fit_arimax_full
+  xreg_sel       <- xreg_full_all
+  fit_arimax     <- fit_arimax_full
+  xreg_full      <- xreg_full_all
+}
 ```
 
 ## Porównanie ARIMA vs ARIMAX
 
 ```{r arima-compare}
 cmp <- tibble(
-  Model      = c("ARIMA(p,1,q)", "ARIMAX(p,1,q)"),
-  AICc       = c(fit_arima$aicc,   fit_arimax$aicc),
-  BIC        = c(fit_arima$bic,    fit_arimax$bic),
-  log_Lik    = c(fit_arima$loglik, fit_arimax$loglik),
-  Liczba_par = c(length(fit_arima$coef), length(fit_arimax$coef))
+  Model      = c("ARIMA(p,1,q)", "ARIMAX(p,1,q) - pelny", "ARIMAX(p,1,q) - po selekcji"),
+  AICc       = c(fit_arima$aicc,         fit_arimax_full$aicc,   fit_arimax_sel$aicc),
+  BIC        = c(fit_arima$bic,          fit_arimax_full$bic,    fit_arimax_sel$bic),
+  log_Lik    = c(fit_arima$loglik,       fit_arimax_full$loglik, fit_arimax_sel$loglik),
+  Liczba_par = c(length(fit_arima$coef), length(fit_arimax_full$coef),
+                 length(fit_arimax_sel$coef))
 )
 
-kable(cmp, digits = 2, caption = "Porownanie modeli", booktabs = TRUE)
+kable(cmp, digits = 2,
+      caption = "Porownanie modeli: ARIMA vs ARIMAX pelny vs ARIMAX po selekcji",
+      booktabs = TRUE) |>
+  kable_styling(latex_options = c("striped", "HOLD_position"))
 ```
 
 Współczynniki na regresorach w "regresji z błędami ARIMA" interpretujemy jako
@@ -733,11 +1066,11 @@ print(jb)
 
 # Test efektu ARCH
 
-```{r arch-lm, fig.cap="ACF i PACF kwadratow reszt ARIMAX"}
+```{r arch-lm, fig.cap="ACF i PACF kwadratow reszt ARIMAX", fig.width=6.5, fig.height=7}
 arch_test <- ArchTest(arimax_resid, lags = 12)
 print(arch_test)
 
-par(mfrow = c(1, 2))
+par(mfrow = c(2, 1))
 acf(arimax_resid^2,  main = "ACF kwadratow reszt",  lag.max = 30)
 pacf(arimax_resid^2, main = "PACF kwadratow reszt", lag.max = 30)
 par(mfrow = c(1, 1))
@@ -747,29 +1080,44 @@ Jeśli $p < 0.05$ — **H3 potwierdzona**.
 
 # Estymacja modelu GARCH-X
 
-W równaniu średniej: ARMA z regresorami zwrotów Brent/EUR-USD oraz zmianami
-zapasów i HDD. W równaniu wariancji: poziom `Storage_pct` (intuicja: niskie
-zapasy → wyższa zmienność).
+W równaniu średniej GARCH używamy regresorów *w pierwszych różnicach*
+(`r_Brent`, `r_EURUSD`, `d_Storage`, `d_HDD`) — są to dokładnie te same
+zmienne, na których przeprowadziliśmy selekcję w sekcji 6. Dla spójności
+metodologicznej w równaniu średniej GARCH stosujemy **wybrany podzbiór**
+regresorów (`selected_diff_vars`). W równaniu wariancji zostawiamy
+`Storage_pct` (poziom) — to osobny mechanizm: niskie zapasy → wyższa
+zmienność, niezależny od selekcji średniej.
 
 ```{r garch-prepare}
 returns_xts <- xts(df_diff$r_TTF, order.by = df_diff$Date)
 
-ext_mean_cols <- c("r_Brent", "r_EURUSD")
-if (has_storage) ext_mean_cols <- c(ext_mean_cols, "d_Storage")
-if (has_hdd)     ext_mean_cols <- c(ext_mean_cols, "d_HDD")
-ext_mean <- as.matrix(df_diff[, ext_mean_cols])
+all_mean_cols <- c("r_Brent", "r_EURUSD")
+if (has_storage) all_mean_cols <- c(all_mean_cols, "d_Storage")
+if (has_hdd)     all_mean_cols <- c(all_mean_cols, "d_HDD")
+
+if (exists("selected_diff_vars") && length(selected_diff_vars) > 0) {
+  ext_mean_cols <- selected_diff_vars
+} else {
+  ext_mean_cols <- all_mean_cols
+}
+ext_mean <- as.matrix(df_diff[, ext_mean_cols, drop = FALSE])
 
 ext_var <- if (has_storage) {
   as.matrix(df_diff[, "Storage_pct", drop = FALSE])
 } else {
   NULL
 }
-cat("Regresory w sredniej GARCH:", paste(ext_mean_cols, collapse = ", "), "\n")
-cat("Regresor w wariancji GARCH:",
-    if (has_storage) "Storage_pct" else "(brak)", "\n")
+
+cat("Regresory w sredniej GARCH (po selekcji):",
+    paste(ext_mean_cols, collapse = ", "), "\n")
+cat("Odrzucone w selekcji              :",
+    paste(setdiff(all_mean_cols, ext_mean_cols), collapse = ", "),
+    if (identical(ext_mean_cols, all_mean_cols)) "(zaden)" else "", "\n")
+cat("Regresor w wariancji GARCH        :",
+    if (has_storage) "Storage_pct (zawsze, niezalezne od selekcji sredniej)" else "(brak)", "\n")
 
 arma_order <- c(fit_arimax$arma[1], fit_arimax$arma[2])
-cat("Rzedy ARMA w GARCH:", arma_order, "\n")
+cat("Rzedy ARMA w GARCH (z fit_arimax po selekcji):", arma_order, "\n")
 ```
 
 ## sGARCH(1,1) bazowy (bez X)
@@ -811,8 +1159,8 @@ std_resid_x <- as.numeric(residuals(fit_garch_x, standardize = TRUE))
 ArchTest(std_resid_x, lags = 12)
 ```
 
-```{r garch-x-plots, fig.cap="Diagnostyka GARCH(1,1)-X", fig.height=6}
-par(mfrow = c(2, 2))
+```{r garch-x-plots, fig.cap="Diagnostyka GARCH(1,1)-X", fig.width=6.5, fig.height=9}
+par(mfrow = c(4, 1))
 plot(fit_garch_x, which = 1)
 plot(fit_garch_x, which = 9)
 plot(fit_garch_x, which = 10)
@@ -933,7 +1281,7 @@ $p < 0.05$ → **H5 potwierdzona**.
 
 ## Wizualizacja prognoz OOS
 
-```{r oos-plot, fig.cap="Prognozy 1-krokowe out-of-sample (2024)", fig.width=9, fig.height=4.5}
+```{r oos-plot, fig.cap="Prognozy 1-krokowe out-of-sample (2024)", fig.width=6.5, fig.height=4}
 tibble(
   Date   = df$Date[idx_test],
   Actual = exp(actual),
@@ -964,7 +1312,7 @@ sygnał z ostatniej obserwacji TTF, regresory dodają marginalną informację.
 
 W bazowym scenariuszu zamrażamy regresory na ostatnim poziomie.
 
-```{r arimax-forecast, fig.cap="Prognoza ARIMAX na 30 dni z 80% i 95% przedzialami ufnosci", fig.width=9, fig.height=4.5}
+```{r arimax-forecast, fig.cap="Prognoza ARIMAX na 30 dni z 80% i 95% przedzialami ufnosci", fig.width=6.5, fig.height=4}
 h <- 30
 xreg_future <- matrix(rep(tail(xreg_full, 1), h), nrow = h, byrow = TRUE,
                       dimnames = list(NULL, colnames(xreg_full)))
@@ -999,7 +1347,7 @@ ggplot() +
 
 ## GARCH-X (zmienność warunkowa)
 
-```{r garch-forecast, fig.cap="Prognoza warunkowej zmiennosci GARCH(1,1)-X", fig.height=4}
+```{r garch-forecast, fig.cap="Prognoza warunkowej zmiennosci GARCH(1,1)-X", fig.width=6.5, fig.height=7}
 ext_var_future  <- matrix(rep(tail(ext_var, 1),  h), nrow = h, byrow = TRUE)
 ext_mean_future <- matrix(rep(tail(ext_mean, 1), h), nrow = h, byrow = TRUE)
 
@@ -1010,7 +1358,7 @@ fc_garch_x <- ugarchforecast(
 )
 print(fc_garch_x)
 
-par(mfrow = c(1, 2))
+par(mfrow = c(2, 1))
 plot(fc_garch_x, which = 1)
 plot(fc_garch_x, which = 3)
 par(mfrow = c(1, 1))
@@ -1018,25 +1366,147 @@ par(mfrow = c(1, 1))
 
 # Podsumowanie i wnioski
 
+```{r conclusions-setup, include=FALSE}
+safe <- function(expr) {
+  v <- tryCatch(expr, error = function(e) NA_real_)
+  if (is.null(v) || (is.atomic(v) && length(v) == 0)) return(NA_real_)
+  if (is.atomic(v) && length(v) == 1) return(as.numeric(v))
+  v
+}
+
+fmt_p <- function(p, eps = 1e-16) {
+  if (is.na(p)) return("n.d.")
+  if (p < eps)   return(sprintf("< %.0e", eps))
+  if (p < 0.001) return("< 0.001")
+  formatC(p, format = "f", digits = 3)
+}
+fmt_p_math <- function(p) {
+  if (is.na(p)) return("\\,\\text{n.d.}")
+  if (p < 1e-16) return("< 10^{-16}")
+  if (p < 0.001) return("< 0.001")
+  paste0("= ", formatC(p, format = "f", digits = 3))
+}
+fmt_n <- function(x, d = 2) if (is.na(x)) "n.d." else formatC(x, format = "f", digits = d)
+
+get_garch_coef <- function(fit, rowname, what = "Estimate") {
+  mc <- safe(fit@fit$matcoef)
+  if (is.null(mc) || !is.matrix(mc)) return(NA_real_)
+  rn <- rownames(mc); cn <- colnames(mc)
+  if (!rowname %in% rn) return(NA_real_)
+  col_idx <- grep(what, cn, fixed = TRUE)
+  if (!length(col_idx)) return(NA_real_)
+  as.numeric(mc[rowname, col_idx[1]])
+}
+
+h <- list()
+
+h$h1_adf_lvl   <- safe(filter(levels_tests, Zmienna == "log(TTF)")$ADF_pvalue)
+h$h1_kpss_lvl  <- safe(filter(levels_tests, Zmienna == "log(TTF)")$KPSS_pvalue)
+h$h1_adf_diff  <- safe(filter(diffs_tests,  Zmienna == "d log(TTF)")$ADF_pvalue)
+h$h1_kpss_diff <- safe(filter(diffs_tests,  Zmienna == "d log(TTF)")$KPSS_pvalue)
+h$h1_verdict   <- if (!any(is.na(c(h$h1_adf_lvl, h$h1_kpss_lvl, h$h1_adf_diff, h$h1_kpss_diff))) &&
+                      h$h1_adf_lvl > 0.05 && h$h1_kpss_lvl < 0.05 &&
+                      h$h1_adf_diff < 0.05 && h$h1_kpss_diff > 0.05) {
+  "**Potwierdzona**"
+} else "**Niejednoznaczna**"
+
+h$h2_eg_p <- safe(adf_eg$p.value)
+joh_stats <- safe(joh@teststat)
+joh_cvals <- safe(joh@cval)
+if (!is.null(joh_stats) && length(joh_stats)) {
+  h$h2_joh_r0    <- as.numeric(joh_stats[length(joh_stats)])
+  h$h2_joh_cv5   <- as.numeric(joh_cvals[length(joh_stats), "5pct"])
+  h$h2_joh_cv10  <- as.numeric(joh_cvals[length(joh_stats), "10pct"])
+} else {
+  h$h2_joh_r0 <- h$h2_joh_cv5 <- h$h2_joh_cv10 <- NA_real_
+}
+h$h2_verdict <- if (!is.na(h$h2_eg_p) && !is.na(h$h2_joh_r0) && !is.na(h$h2_joh_cv5) &&
+                    h$h2_eg_p < 0.05 && h$h2_joh_r0 > h$h2_joh_cv5) {
+  "**Potwierdzona**"
+} else "**Nieuzasadniona**"
+
+h$h3_arch_chi <- safe(as.numeric(arch_test$statistic))
+h$h3_arch_p   <- safe(arch_test$p.value)
+h$h3_verdict  <- if (!is.na(h$h3_arch_p) && h$h3_arch_p < 0.05) "**Potwierdzona**" else "**Odrzucona**"
+
+aic_models <- c(
+  "sGARCH"          = safe(infocriteria(fit_garch_base)[1]),
+  "sGARCH-X"        = safe(infocriteria(fit_garch_x)[1]),
+  "eGARCH-X"        = safe(infocriteria(fit_egarch)[1]),
+  "gjrGARCH-X"      = safe(infocriteria(fit_gjr)[1])
+)
+bic_models <- c(
+  "sGARCH"          = safe(infocriteria(fit_garch_base)[2]),
+  "sGARCH-X"        = safe(infocriteria(fit_garch_x)[2]),
+  "eGARCH-X"        = safe(infocriteria(fit_egarch)[2]),
+  "gjrGARCH-X"      = safe(infocriteria(fit_gjr)[2])
+)
+best_name <- function(vec) {
+  idx <- which.min(vec)
+  if (length(idx) == 0) NA_character_ else names(vec)[idx]
+}
+h$h4_aic_table <- aic_models
+h$h4_bic_table <- bic_models
+h$h4_best_aic  <- best_name(aic_models)
+h$h4_best_bic  <- best_name(bic_models)
+h$h4_aic_base  <- aic_models["sGARCH"]
+h$h4_aic_x     <- aic_models["sGARCH-X"]
+h$h4_bic_base  <- bic_models["sGARCH"]
+h$h4_bic_x     <- bic_models["sGARCH-X"]
+h$h4_vxreg_t   <- get_garch_coef(fit_garch_x, "vxreg1", "t value")
+h$h4_vxreg_p   <- get_garch_coef(fit_garch_x, "vxreg1", "Pr(>|t|)")
+h$h4_verdict   <- if (h$h4_best_aic %in% c("sGARCH-X", "eGARCH-X", "gjrGARCH-X") &&
+                      h$h4_best_bic %in% c("sGARCH-X", "eGARCH-X", "gjrGARCH-X")) {
+  "**Potwierdzona**"
+} else if (h$h4_best_aic %in% c("sGARCH-X", "eGARCH-X", "gjrGARCH-X")) {
+  "**Częściowo**"
+} else "**Nieuzasadniona**"
+
+h$h4_alpha1 <- get_garch_coef(fit_garch_x, "alpha1", "Estimate")
+h$h4_beta1  <- get_garch_coef(fit_garch_x, "beta1",  "Estimate")
+h$h4_persist <- if (!any(is.na(c(h$h4_alpha1, h$h4_beta1)))) h$h4_alpha1 + h$h4_beta1 else NA_real_
+
+h$h5_dm_stat <- safe(as.numeric(dm$statistic))
+h$h5_dm_p    <- safe(dm$p.value)
+h$h5_rmse_arima  <- safe(oos_table$RMSE[oos_table$Model == "ARIMA"])
+h$h5_rmse_arimax <- safe(oos_table$RMSE[oos_table$Model == "ARIMAX"])
+h$h5_verdict <- if (!is.na(h$h5_dm_p) && h$h5_dm_p < 0.05) "**Potwierdzona**" else "**Odrzucona**"
+
+h$arimax_full_aic <- safe(fit_arimax_full$aicc)
+h$arimax_full_bic <- safe(fit_arimax_full$bic)
+h$arimax_sel_aic  <- safe(fit_arimax_sel$aicc)
+h$arimax_sel_bic  <- safe(fit_arimax_sel$bic)
+h$arima_aic       <- safe(fit_arima$aicc)
+h$arima_bic       <- safe(fit_arima$bic)
+
+cf_full <- safe(coef(fit_arimax_full))
+se_full <- safe(sqrt(diag(fit_arimax_full$var.coef)))
+if (!is.null(cf_full) && "log_Brent" %in% names(cf_full)) {
+  h$brent_coef <- as.numeric(cf_full["log_Brent"])
+  h$brent_t    <- h$brent_coef / as.numeric(se_full["log_Brent"])
+  h$brent_p    <- 2 * (1 - pnorm(abs(h$brent_t)))
+} else { h$brent_coef <- h$brent_t <- h$brent_p <- NA_real_ }
+```
+
 ## Weryfikacja hipotez
 
 | Hipoteza | Werdykt | Uzasadnienie |
 |---|---|---|
-| **H1**: TTF jest I(1) | **Potwierdzona** | ADF nie odrzuca niestacjonarności w poziomach ($p = 0.83$), KPSS odrzuca stacjonarność ($p = 0.01$); po różnicowaniu ADF odrzuca ($p < 0.01$), KPSS nie odrzuca ($p > 0.1$). |
-| **H2**: kointegracja TTF–Brent–EURUSD | **Nieuzasadniona** | Engle-Granger: $p = 0.07$ (graniczne, nie odrzucamy niestacjonarności reszt). Johansen: statystyka dla $r=0$ wynosi 31.93 przy wart. krytycznej 10% = 32.00 — *ledwo* nie odrzucamy braku kointegracji. |
-| **H3**: efekt ARCH w resztach ARIMAX | **Potwierdzona** | ARCH-LM: $\chi^2 = 285.5$, $p < 2.2 \cdot 10^{-16}$. Silna heteroskedastyczność warunkowa. |
-| **H4**: GARCH-X poprawia modelowanie wariancji | **Częściowo** | Regresor `Storage_pct` w wariancji statystycznie istotny ($t = 8.0$), AIC: sGARCH-X (-3.580) < sGARCH bazowy (-3.545). Ale: po BIC najlepszy jest *sGARCH bazowy* (-3.515), po AIC najlepszy *eGARCH-X* (-3.588). Już sGARCH bazowy radzi sobie z ARCH (Weighted ARCH LM $p > 0.66$). |
-| **H5**: ARIMAX > ARIMA OOS | **Odrzucona** | Test Diebolda-Mariano: $DM = 1.18$, $p = 0.12$. ARIMAX *nie jest istotnie lepszy* od ARIMA out-of-sample. Różnica RMSE marginalna (0.0317 vs 0.0313). |
+| **H1**: TTF jest I(1) | `r h$h1_verdict` | ADF na log(TTF) ($p = `r fmt_n(h$h1_adf_lvl, 3)`$) nie odrzuca niestacjonarności w poziomach; KPSS odrzuca stacjonarność ($p = `r fmt_n(h$h1_kpss_lvl, 3)`$). Po różnicowaniu ADF odrzuca ($p `r fmt_p_math(h$h1_adf_diff)`$), KPSS nie odrzuca ($p = `r fmt_n(h$h1_kpss_diff, 3)`$). |
+| **H2**: kointegracja TTF–Brent–EURUSD | `r h$h2_verdict` | Engle-Granger: ADF na resztach $p = `r fmt_n(h$h2_eg_p, 3)`$. Johansen ($r = 0$): statystyka = `r fmt_n(h$h2_joh_r0)` przy wartości krytycznej 5% = `r fmt_n(h$h2_joh_cv5)` (10% = `r fmt_n(h$h2_joh_cv10)`). |
+| **H3**: efekt ARCH w resztach ARIMAX | `r h$h3_verdict` | ARCH-LM: $\chi^2 = `r fmt_n(h$h3_arch_chi, 1)`$, $p `r fmt_p_math(h$h3_arch_p)`$. |
+| **H4**: GARCH-X poprawia modelowanie wariancji | `r h$h4_verdict` | AIC: sGARCH = `r fmt_n(h$h4_aic_base, 4)`, sGARCH-X = `r fmt_n(h$h4_aic_x, 4)`. BIC: sGARCH = `r fmt_n(h$h4_bic_base, 4)`, sGARCH-X = `r fmt_n(h$h4_bic_x, 4)`. Najlepszy po AIC: **`r h$h4_best_aic`**, po BIC: **`r h$h4_best_bic`**. Regresor wariancji `Storage_pct`: $t = `r fmt_n(h$h4_vxreg_t, 2)`$, $p `r fmt_p_math(h$h4_vxreg_p)`$. |
+| **H5**: ARIMAX > ARIMA OOS | `r h$h5_verdict` | Test Diebolda-Mariano: $DM = `r fmt_n(h$h5_dm_stat, 2)`$, $p = `r fmt_n(h$h5_dm_p, 3)`$. RMSE: ARIMA = `r fmt_n(h$h5_rmse_arima, 4)`, ARIMAX (po selekcji) = `r fmt_n(h$h5_rmse_arimax, 4)`. |
 
 ## Wnioski kluczowe
 
 - **Stacjonarność (H1)**: ceny TTF, Brent i EUR/USD są I(1); `Storage_pct` stacjonarne wokół poziomu (z silną sezonowością roczną).
-- **Brak silnej kointegracji (H2)**: oba testy (Engle-Granger, Johansen) są na granicy istotności. Można interpretować jako "słabą" relację długookresową, ale formalnie *nie ma podstaw* do budowy VECM. Brent pełni jednak rolę istotnego regresora w ARIMAX (wsp. 0.17 dla `log(Brent)`, $p < 10^{-15}$).
-- **ARIMAX vs ARIMA in-sample (H3 częściowo)**: ARIMAX poprawia dopasowanie in-sample (AIC: -5532 vs -5490, BIC: -5483 vs -5458), ale **różnica out-of-sample jest nieistotna statystycznie**. Wniosek: regresory wnoszą informację o poziomie cen, ale w krótkim horyzoncie (1-krokowa prognoza dzienna) sama historia TTF już wystarcza.
-- **Heteroskedastyczność (H3)**: silnie potwierdzona — ARIMAX bez warstwy GARCH nie domknie modelu.
-- **GARCH-X — wniosek warunkowy (H4)**: poziom zapasów istotny statystycznie w równaniu wariancji, ale efekt liczbowo niewielki (`vxreg1 ≈ 0`). Po BIC najprostszy `sGARCH(1,1)` jest preferowany. **Praktyczna rekomendacja**: w zastosowaniach produkcyjnych wybrać `eGARCH-X` (najlepszy AIC) ze względu na asymetrię reakcji wariancji na szoki (Sign Bias Joint Effect $p = 0.038$ w bazowym sGARCH).
-- **Persystencja zmienności**: $\hat{\alpha}_1 + \hat{\beta}_1 \approx 0.156 + 0.843 = 0.999$ — model na granicy IGARCH. Typowe dla rynków surowcowych po szoku strukturalnym 2022 r. Half-life szoku zmienności rzędu setek sesji.
-- **Out-of-sample (H5)**: regresory fundamentalne **nie poprawiają** istotnie prognozy 1-krokowej dzienne ceny w 2024 r. Hipoteza H5 odrzucona.
+- **Kointegracja (H2)**: ADF na resztach Engle-Grangera daje $p = `r fmt_n(h$h2_eg_p, 3)`$, Johansen statystyka `r fmt_n(h$h2_joh_r0)` vs wartość krytyczna 5% `r fmt_n(h$h2_joh_cv5)`. `r if (!is.na(h$h2_eg_p) && h$h2_eg_p < 0.05) "Istnieje istotna relacja długookresowa" else "Brak silnej relacji długookresowej"` — formalnie `r if (h$h2_verdict == "**Potwierdzona**") "uzasadnia" else "nie uzasadnia"` budowy VECM. Brent pełni jednak rolę regresora krótkookresowego w ARIMAX (wsp. = `r fmt_n(h$brent_coef, 3)` dla `log(Brent)`, $p `r fmt_p_math(h$brent_p)`$).
+- **ARIMAX vs ARIMA**: AICc ARIMA = `r fmt_n(h$arima_aic, 2)`, ARIMAX pełny = `r fmt_n(h$arimax_full_aic, 2)`, ARIMAX po selekcji = `r fmt_n(h$arimax_sel_aic, 2)`. BIC analogicznie: `r fmt_n(h$arima_bic, 2)` / `r fmt_n(h$arimax_full_bic, 2)` / `r fmt_n(h$arimax_sel_bic, 2)`. Regresory wnoszą istotną informację in-sample, ale różnica out-of-sample (1 krok dzienny) `r if (!is.na(h$h5_dm_p) && h$h5_dm_p < 0.05) "**jest** istotna statystycznie" else "**nie jest** istotna statystycznie"` (DM $p = `r fmt_n(h$h5_dm_p, 3)`$).
+- **Heteroskedastyczność (H3)**: silnie potwierdzona — ARIMAX bez warstwy GARCH nie domknie modelu (ARCH-LM $\chi^2 = `r fmt_n(h$h3_arch_chi, 1)`$).
+- **GARCH-X (H4)**: regresor `Storage_pct` w równaniu wariancji `r if (!is.na(h$h4_vxreg_p) && h$h4_vxreg_p < 0.05) "**istotny statystycznie**" else "nieistotny statystycznie"` ($t = `r fmt_n(h$h4_vxreg_t, 2)`$). Po AIC preferowany model to **`r h$h4_best_aic`**, po BIC **`r h$h4_best_bic`**. `r if (!is.na(h$h4_best_aic) && !is.na(h$h4_best_bic) && h$h4_best_aic != h$h4_best_bic) "Rozjazd między kryteriami — w zastosowaniach prognostycznych kierujemy się BIC (większa kara za parametry, lepsza generalizacja)." else if (!is.na(h$h4_best_aic) && !is.na(h$h4_best_bic)) "Oba kryteria zgodne — wybór jednoznaczny." else "Niektóre modele GARCH nie skonwergowały — wynik częściowy."`
+- **Persystencja zmienności**: $\hat{\alpha}_1 + \hat{\beta}_1 \approx `r fmt_n(h$h4_alpha1, 3)` + `r fmt_n(h$h4_beta1, 3)` = `r fmt_n(h$h4_persist, 3)`$ — `r if (!is.na(h$h4_persist) && h$h4_persist >= 1.0) "**suma przekracza 1** (formalnie niestacjonarna wariancja warunkowa, brak skończonej wariancji bezwarunkowej); rugarch w specyfikacji sGARCH nie wymusza ograniczenia $\\alpha+\\beta<1$ — wynik typowy dla rynków surowcowych po szoku strukturalnym 2022 r., wskazuje, że model na granicy IGARCH jest bliższy rzeczywistości niż klasyczny sGARCH." else if (!is.na(h$h4_persist) && h$h4_persist > 0.99) "**model na granicy IGARCH** — typowe dla rynków surowcowych po szoku strukturalnym 2022 r." else if (!is.na(h$h4_persist) && h$h4_persist > 0.95) "wysoka persystencja, charakterystyczna dla szeregów finansowych." else "umiarkowana persystencja."`
+- **Out-of-sample (H5)**: regresory fundamentalne `r if (h$h5_verdict == "**Potwierdzona**") "**istotnie poprawiają**" else "**nie poprawiają istotnie**"` prognozy 1-krokowej dziennej ceny w 2024 r. RMSE ARIMA = `r fmt_n(h$h5_rmse_arima, 4)` vs ARIMAX = `r fmt_n(h$h5_rmse_arimax, 4)`.
 
 ## Ograniczenia i kierunki rozszerzeń
 
@@ -1046,3 +1516,4 @@ par(mfrow = c(1, 1))
 - **VECM** nie ma uzasadnienia (brak kointegracji); naturalne rozszerzenie to **DCC-GARCH** (wielowymiarowa zmienność) lub **VAR** w stopach zwrotu.
 - **Częstotliwość**: wszystkie szeregi sprowadzone do dziennej z LOCF dla luk weekendowych. Pełne wykorzystanie zmiennych miesięcznych (LNG, ERA5) wymagałoby modeli mixed-frequency (MIDAS) — poza zakresem.
 - **Prognoza regresorów**: w horyzoncie 30 dni zamrożono regresory na ostatniej wartości. Rozszerzeniem byłoby modelowanie ścieżek `r_Brent` i `Storage_pct` osobnymi ARIMA i propagacja niepewności Monte Carlo.
+- **Selekcja zmiennych** (sekcja 6, przed właściwym modelowaniem): zastosowano formalną procedurę *general-to-specific* na pomocniczej statycznej regresji OLS w pierwszych różnicach (regresory I(0), t-statystyki poprawne) — eliminacja wsteczna z progiem $p > 0.10$ oraz porównanie modeli zagnieżdżonych po kryteriach AIC i BIC. Wszystkie 4 regresory mają uzasadnienie *a priori* mechanizmem ekonomicznym (substytucyjność Brent–TTF, kurs importu LNG, theory of storage, popyt sezonowy HDD); empirycznie zachowano tylko te, które przeszły test istotności statystycznej. Dalsze modele (ARIMAX, GARCH-X, prognoza, OOS) operują **na zbiorze po selekcji**, a model z pełnym zestawem regresorów pełni rolę punktu odniesienia (GUM — *general unrestricted model*). Alternatywą byłaby selekcja oparta na LASSO/Elastic Net z walidacją krzyżową szeregową (rolling-origin CV), co lepiej kontroluje overfitting w obecności wielu skorelowanych regresorów makro.
