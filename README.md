@@ -10,88 +10,78 @@ Autorzy: Maciek Gilecki, Wioletta Grabias.
 
 ```
 .
-├── R/
-│   ├── 01_fetch_data.R     # pobranie szeregów: Brent (FRED), EUR/USD (FRED),
-│   │                       # zapasy UE (AGSI+ API), HDD (Open-Meteo)
-│   └── 02_merge_data.R     # scalenie wszystkich źródeł do jednego panelu dziennego
 ├── data/
-│   ├── raw/                # surowe CSV-ki z poszczególnych źródeł
-│   │   ├── ttf.csv         # TTF front-month z Kaggle/Investing.com (zachowany)
-│   │   ├── brent.csv       # generowane przez 01_fetch_data.R
+│   ├── raw/
+│   │   ├── ttf.csv         # TTF front-month z Kaggle/Investing.com (w repo)
+│   │   ├── storage_eu.csv  # ręcznie pobrane z AGSI+ (patrz nizej)
+│   │   ├── brent.csv       # pobierane automatycznie z FRED (cache)
 │   │   ├── eurusd.csv      # j.w.
-│   │   ├── storage_eu.csv  # j.w. (wymaga klucza AGSI+)
-│   │   └── weather_hdd.csv # j.w.
+│   │   └── weather_hdd.csv # pobierane automatycznie z Open-Meteo (cache)
 │   └── processed/
-│       └── ttf_merged.csv  # finalny panel dzienny używany przez .Rmd
-├── docs/
-│   └── Docs.pdf            # specyfikacja projektu
-├── TTF_Ekonometria.Rmd     # główny raport (renderuj do HTML)
+│       └── ttf_merged.csv  # finalny panel dzienny (tworzony przy knit)
+├── docs/Docs.pdf           # specyfikacja projektu
+├── TTF_Ekonometria.Rmd     # cały raport - pobranie danych, modelowanie, prognoza
 └── README.md
 ```
 
 ## Zmienne w modelu
 
-| Symbol | Opis | Źródło | Częstotliwość natywna |
-|---|---|---|---|
-| `TTF` | Cena front-month TTF [EUR/MWh] | Investing.com via Kaggle | dzienna |
-| `Brent` | Ropa Brent [USD/bbl] | FRED `DCOILBRENTEU` | dzienna |
-| `EURUSD` | USD za 1 EUR | FRED `DEXUSEU` | dzienna |
-| `Storage_pct` | % wypełnienia magazynów UE | AGSI+ API (GIE) | dzienna |
-| `T_mean_EU` | Ważona śr. temperatura Europy Zach. [°C] | Open-Meteo Historical | dzienna |
-| `HDD` | Heating Degree Days (baza 18 °C) | Open-Meteo Historical | dzienna |
+| Symbol | Opis | Źródło |
+|---|---|---|
+| `TTF` | Cena front-month TTF [EUR/MWh] | Investing.com via Kaggle |
+| `Brent` | Ropa Brent [USD/bbl] | FRED `DCOILBRENTEU` |
+| `EURUSD` | USD za 1 EUR | FRED `DEXUSEU` |
+| `Storage_pct` | % wypełnienia magazynów UE | AGSI+ (ręczny eksport CSV) |
+| `T_mean_EU` | Ważona śr. temperatura Europy Zach. [°C] | Open-Meteo Historical |
+| `HDD` | Heating Degree Days (baza 18 °C) | Open-Meteo Historical |
 
-## Pierwsze uruchomienie
+## Jak uruchomić
 
-### 1. Klucz API AGSI+ (jednorazowo)
+### 1. Pobierz zapasy gazu z AGSI+
 
-Zapasy gazu UE pobierane są z [AGSI+ API](https://agsi.gie.eu/) operatora GIE.
-API jest **darmowe**, ale wymaga rejestracji konta:
+Wejdź na <https://agsi.gie.eu/data-overview/EU>, ustaw zakres dat
+`2015-01-01` – `2024-11-29` i kliknij **Download CSV**. Zapisz plik jako:
 
-1. Załóż konto na <https://agsi.gie.eu/account>.
-2. W panelu wygeneruj klucz API.
-3. Ustaw klucz jako zmienną środowiskową — najwygodniej trwale w `~/.Renviron`:
-
-   ```
-   AGSI_API_KEY=twoj_klucz_tutaj
-   ```
-
-   Alternatywnie w sesji R:
-
-   ```r
-   Sys.setenv(AGSI_API_KEY = "twoj_klucz_tutaj")
-   ```
-
-> **Bez klucza** skrypt `01_fetch_data.R` pominie zapasy i pójdzie dalej —
-> model będzie wciąż wielowymiarowy (Brent, EUR/USD, HDD), ale słabszy.
-
-Pozostałe źródła (FRED, Open-Meteo) **nie wymagają klucza**.
-
-### 2. Pobranie i scalenie danych
-
-W R lub RStudio, z poziomu katalogu projektu:
-
-```r
-source("R/01_fetch_data.R")   # pobiera Brent, EUR/USD, storage, pogodę
-source("R/02_merge_data.R")   # scala z TTF do data/processed/ttf_merged.csv
+```
+data/raw/storage_eu.csv
 ```
 
-Skrypty zainstalują brakujące pakiety automatycznie.
+Parser w Rmd automatycznie wykrywa separator (`,` lub `;`) i nazwy kolumn,
+więc nic nie trzeba edytować.
 
-### 3. Renderowanie raportu
+> Jeśli pominiesz ten krok, raport wciąż się wyrenderuje, ale bez regresora
+> `Storage_pct` (4 zmienne zamiast 5).
 
-```r
-rmarkdown::render("TTF_Ekonometria.Rmd")
+### 2. Otwórz Rmd w RStudio
+
 ```
+File -> Open File -> TTF_Ekonometria.Rmd
+```
+
+### 3. Knit
+
+Kliknij niebieski przycisk **Knit** (lub `Ctrl+Shift+K`).
+
+Co się stanie podczas pierwszego knit:
+
+1. Auto-instalacja brakujących pakietów (~1-2 min za pierwszym razem).
+2. Pobranie Brent i EUR/USD z FRED (CSV bezpośrednio, bez API).
+3. Pobranie temperatur z Open-Meteo dla 6 aglomeracji Europy Zach.
+4. Wczytanie ręcznie pobranego AGSI+ i wczytanie TTF.
+5. Scalenie wszystkiego do jednego panelu dziennego.
+6. Pełna analiza: EDA, stacjonarność, kointegracja, ARIMA/ARIMAX, ARCH-LM,
+   GARCH-X, walk-forward OOS, Diebold-Mariano, prognoza punktowa i wariancji.
 
 Wynik: `TTF_Ekonometria.html` w katalogu projektu.
 
-## Wymagane pakiety R
+**Drugi knit** jest szybki — pobrane dane są cache'owane w `data/raw/`,
+walk-forward OOS jest cache'owany na poziomie chunk'a.
 
-Automatycznie instalowane przez skrypty:
+## Wymagane pakiety R (auto-instalowane)
 
-- **Pobieranie**: `quantmod`, `httr`, `jsonlite`, `dplyr`, `lubridate`, `readr`, `purrr`, `tidyr`, `zoo`
-- **Modelowanie**: `tidyverse`, `forecast`, `tseries`, `FinTS`, `rugarch`, `moments`,
-  `urca`, `xts`, `patchwork`, `knitr`, `kableExtra`, `GGally`
+`tidyverse`, `lubridate`, `zoo`, `readr`, `quantmod`, `httr`, `jsonlite`,
+`forecast`, `tseries`, `FinTS`, `rugarch`, `urca`, `moments`, `xts`,
+`patchwork`, `GGally`, `knitr`, `kableExtra`.
 
 ## Co się zmieniło względem pierwotnej wersji
 
@@ -99,10 +89,10 @@ Pierwsza wersja raportu była **jednowymiarowa** (tylko cena TTF) — została o
 przez prowadzącego jako niezgodna ze specyfikacją z `docs/Docs.pdf`. Aktualna wersja:
 
 1. Wprowadza **regresory egzogeniczne** Brent, EUR/USD, zapasy UE i HDD.
-2. Dodaje sekcję **kointegracji** (Engle-Granger, Johansen) jako uzasadnienie
-   długookresowej relacji TTF–Brent.
+2. Dodaje sekcję **kointegracji** (Engle-Granger, Johansen) uzasadniającą
+   długookresową relację TTF-Brent.
 3. Rozszerza ARIMA → **ARIMAX**, GARCH → **GARCH-X**
    (`Storage_pct` w równaniu warunkowej wariancji).
-4. Dodaje **walidację out-of-sample** (walk-forward na okresie 2024)
-   oraz **test Diebolda–Mariano** porównujący model jednowymiarowy z ARIMAX.
-5. Aktualizuje hipotezy badawcze (H2–H5 odzwierciedlają wielowymiarowy charakter).
+4. Dodaje **walidację out-of-sample** (walk-forward 2024) z testem
+   **Diebolda-Mariano** porównującym model jednowymiarowy z wielowymiarowym.
+5. Aktualizuje hipotezy badawcze (H2-H5 odzwierciedlają wielowymiarowy charakter).
