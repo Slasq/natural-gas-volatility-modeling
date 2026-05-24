@@ -82,16 +82,6 @@ walk-forward OOS jest cache'owany na poziomie chunk'a.
 `tidyverse`, `lubridate`, `zoo`, `readr`, `quantmod`, `httr`, `jsonlite`,
 `forecast`, `tseries`, `FinTS`, `rugarch`, `urca`, `moments`, `xts`,
 `patchwork`, `GGally`, `knitr`, `kableExtra`.
-
-## Co się zmieniło względem pierwotnej wersji
-
-Pierwsza wersja raportu była **jednowymiarowa** (tylko cena TTF) — została odrzucona
-przez prowadzącego jako niezgodna ze specyfikacją z `docs/Docs.pdf`. Aktualna wersja:
-
-1. Wprowadza **regresory egzogeniczne** Brent, EUR/USD, zapasy UE i HDD.
-2. Dodaje sekcję **kointegracji** (Engle-Granger, Johansen) uzasadniającą
-   długookresową relację TTF-Brent.
-3. Rozszerza ARIMA → **ARIMAX**, GARCH → **GARCH-X**
    (`Storage_pct` w równaniu warunkowej wariancji).
 4. Dodaje **walidację out-of-sample** (walk-forward 2024) z testem
    **Diebolda-Mariano** porównującym model jednowymiarowy z wielowymiarowym.
